@@ -206,7 +206,7 @@ pnpm pack
 pnpm simulate:pacing
 ```
 
-The headless [decoder-pacing sandbox](experiments/decoder-pacing/README.md) reconstructs measured JMGO frame stalls locally and never contacts the projector.
+The headless [decoder-pacing sandbox](experiments/decoder-pacing/README.md) reconstructs measured JMGO frame stalls locally and never contacts the projector. The [JMGO Artemis experiment](experiments/artemis-jmgo/README.md) contains the reproducible client patches that achieved hitch-free 720p60 with audio on hardware.
 
 ## License
 

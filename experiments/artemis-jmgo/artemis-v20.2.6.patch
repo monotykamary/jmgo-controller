@@ -1,0 +1,602 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index c706dbf..3ba792a 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -96,7 +96,7 @@ android {
+     buildTypes {
+         debug {
+             applicationIdSuffix ".noirdebug"
+-            resValue "string", "app_label", "Diana"
++            resValue "string", "app_label", "JMGO Artemis Lab"
+             resValue "string", "app_label_root", "Diana (Root)"
+             resValue "string", "app_label_game", "Diana (Game)"
+ 
+diff --git a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
+index 53cbf68..7366179 100755
+--- a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
++++ b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
+@@ -8,6 +8,9 @@ import android.media.AudioManager;
+ import android.media.AudioTrack;
+ import android.media.audiofx.AudioEffect;
+ import android.os.Build;
++import android.os.Process;
++
++import java.util.concurrent.ArrayBlockingQueue;
+ 
+ import com.limelight.LimeLog;
+ import com.limelight.nvstream.av.audio.AudioRenderer;
+@@ -19,6 +22,15 @@ public class AndroidAudioRenderer implements AudioRenderer {
+     private final boolean enableAudioFx;
+ 
+     private AudioTrack track;
++    private static final int JMGO_AUDIO_BUFFER_FRAMES = 24;
++    private static final int JMGO_AUDIO_QUEUE_FRAMES = 32;
++    private final ArrayBlockingQueue<short[]> freeAudioFrames =
++            new ArrayBlockingQueue<>(JMGO_AUDIO_QUEUE_FRAMES);
++    private final ArrayBlockingQueue<short[]> readyAudioFrames =
++            new ArrayBlockingQueue<>(JMGO_AUDIO_QUEUE_FRAMES);
++    private Thread audioWriterThread;
++    private volatile boolean audioStopping;
++    private long audioQueueDrops;
+ 
+     public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
+         this.context = context;
+@@ -147,6 +159,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
+                     throw new IllegalStateException();
+             }
+ 
++            // JMGO's low-latency AudioTrack periodically blocks for roughly 100 ms.
++            // Keep enough device-side audio queued to absorb that pause while the pooled
++            // writer keeps Moonlight's receive thread independent from the audio HAL.
++            bufferSize = Math.max(bufferSize, bytesPerFrame * JMGO_AUDIO_BUFFER_FRAMES);
++
+             // Skip low latency options if hardware sample rate doesn't match the content
+             if (AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC) != sampleRate && lowLatency) {
+                 continue;
+@@ -182,25 +199,70 @@ public class AndroidAudioRenderer implements AudioRenderer {
+             return -2;
+         }
+ 
++        freeAudioFrames.clear();
++        readyAudioFrames.clear();
++        int frameSamples = audioConfiguration.channelCount * samplesPerFrame;
++        for (int i = 0; i < JMGO_AUDIO_QUEUE_FRAMES; i++) {
++            freeAudioFrames.add(new short[frameSamples]);
++        }
++
+         return 0;
+     }
+ 
+     @Override
+     public void playDecodedAudio(short[] audioData) {
+-        // Only queue up to 40 ms of pending audio data in addition to what AudioTrack is buffering for us.
+-        if (MoonBridge.getPendingAudioDuration() < 40) {
+-            // This will block until the write is completed. That can cause a backlog
+-            // of pending audio data, so we do the above check to be able to bound
+-            // latency at 40 ms in that situation.
+-            track.write(audioData, 0, audioData.length);
++        short[] frame = freeAudioFrames.poll();
++        if (frame == null) {
++            frame = readyAudioFrames.poll();
++            audioQueueDrops++;
++            if ((audioQueueDrops & (audioQueueDrops - 1)) == 0) {
++                LimeLog.warning("JMGO audio queue drops: " + audioQueueDrops);
++            }
+         }
+-        else {
+-            LimeLog.info("Too much pending audio data: " + MoonBridge.getPendingAudioDuration() +" ms");
++        if (frame == null) {
++            return;
++        }
++
++        System.arraycopy(audioData, 0, frame, 0, audioData.length);
++        if (!readyAudioFrames.offer(frame)) {
++            freeAudioFrames.offer(frame);
+         }
+     }
+ 
++    private void startAudioWriter() {
++        audioStopping = false;
++        audioWriterThread = new Thread(() -> {
++            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
++            while (!audioStopping) {
++                short[] frame;
++                try {
++                    frame = readyAudioFrames.take();
++                }
++                catch (InterruptedException e) {
++                    if (audioStopping) {
++                        return;
++                    }
++                    continue;
++                }
++
++                int offset = 0;
++                while (offset < frame.length && !audioStopping) {
++                    int written = track.write(frame, offset, frame.length - offset);
++                    if (written <= 0) {
++                        LimeLog.warning("JMGO AudioTrack write failed: " + written);
++                        break;
++                    }
++                    offset += written;
++                }
++                freeAudioFrames.offer(frame);
++            }
++        }, "Audio - JMGO Writer");
++        audioWriterThread.start();
++    }
++
+     @Override
+     public void start() {
++        startAudioWriter();
+         if (enableAudioFx) {
+             // Open an audio effect control session to allow equalizers to apply audio effects
+             Intent i = new Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
+@@ -213,6 +275,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
+ 
+     @Override
+     public void stop() {
++        audioStopping = true;
++        track.pause();
++        track.flush();
++        if (audioWriterThread != null) {
++            audioWriterThread.interrupt();
++            try {
++                audioWriterThread.join(1000);
++            }
++            catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            }
++            audioWriterThread = null;
++        }
++
+         if (enableAudioFx) {
+             // Close our audio effect control session when we're stopping
+             Intent i = new Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
+diff --git a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
+index 537b50f..e75ee6d 100755
+--- a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
++++ b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
+@@ -8,6 +8,7 @@ import java.util.Arrays;
+ import java.util.List;
+ import java.util.concurrent.LinkedBlockingQueue;
+ import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.locks.LockSupport;
+ 
+ import org.jcodec.codecs.h264.H264Utils;
+ import org.jcodec.codecs.h264.io.model.SeqParameterSet;
+@@ -25,6 +26,10 @@ import android.annotation.SuppressLint;
+ import android.annotation.TargetApi;
+ import android.app.Activity;
+ import android.content.Context;
++import android.graphics.ImageFormat;
++import android.media.Image;
++import android.media.ImageReader;
++import android.media.ImageWriter;
+ import android.media.MediaCodec;
+ import android.media.MediaCodecInfo;
+ import android.media.MediaFormat;
+@@ -65,6 +70,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+     private Activity activity;
+     private MediaCodec videoDecoder;
+     private Thread rendererThread;
++    private Thread pacedPresentationThread;
+     private boolean needsSpsBitstreamFixup, isExynos4;
+     private boolean adaptivePlayback, directSubmit, fusedIdrFrame;
+     private boolean constrainedHighProfile;
+@@ -75,6 +81,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+     private boolean invertResolution;
+     private int videoFormat;
+     private Surface renderTarget;
++    private boolean jmgoImagePipeline;
++    private ImageReader decodedImageReader;
++    private ImageWriter decodedImageWriter;
++    private HandlerThread decodedImageReaderThread;
++    private final LinkedBlockingQueue<Image> decodedImageQueue = new LinkedBlockingQueue<>();
++    private static final int DECODED_IMAGE_READER_CAPACITY = 12;
++    private static final int DECODED_IMAGE_QUEUE_LIMIT = 10;
+     private volatile boolean stopping;
+     private CrashListener crashListener;
+     private boolean reportedCrash;
+@@ -126,6 +139,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+     private long lastNetDataNum;
+     private LinkedBlockingQueue<Integer> outputBufferQueue = new LinkedBlockingQueue<>();
+     private static final int OUTPUT_BUFFER_QUEUE_LIMIT = 2;
++    private static final int OUTPUT_BUFFER_QUEUE_START_THRESHOLD = 4;
++    private volatile boolean outputPacingStarted;
+     private long lastRenderedFrameTimeNanos;
+     private HandlerThread choreographerHandlerThread;
+     private Handler choreographerHandler;
+@@ -545,7 +560,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+ 
+         LimeLog.info("Configuring with format: "+format);
+ 
+-        videoDecoder.configure(format, renderTarget, null, 0);
++        videoDecoder.configure(format,
++                jmgoImagePipeline ? decodedImageReader.getSurface() : renderTarget, null, 0);
+ 
+         configuredFormat = format;
+ 
+@@ -571,6 +587,87 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+         }
+     }
+ 
++    private void initializeJmgoImagePipeline() {
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || renderTarget == null) {
++            return;
++        }
++
++        try {
++            decodedImageReader = ImageReader.newInstance(
++                    initialWidth, initialHeight, ImageFormat.YUV_420_888,
++                    DECODED_IMAGE_READER_CAPACITY);
++            decodedImageWriter = ImageWriter.newInstance(
++                    renderTarget, 4, ImageFormat.YUV_420_888);
++            decodedImageReaderThread = new HandlerThread(
++                    "Video - JMGO ImageReader", Process.THREAD_PRIORITY_URGENT_DISPLAY);
++            decodedImageReaderThread.start();
++            decodedImageReader.setOnImageAvailableListener(reader -> {
++                Image image = null;
++                try {
++                    while ((image = reader.acquireNextImage()) != null) {
++                        if (decodedImageQueue.size() >= DECODED_IMAGE_QUEUE_LIMIT) {
++                            Image oldest = decodedImageQueue.poll();
++                            if (oldest != null) {
++                                oldest.close();
++                            }
++                        }
++                        decodedImageQueue.offer(image);
++                        image = null;
++                    }
++                }
++                catch (IllegalStateException e) {
++                    LimeLog.warning("JMGO image reader stalled: " + e.getMessage());
++                }
++                finally {
++                    if (image != null) {
++                        image.close();
++                    }
++                }
++            }, new Handler(decodedImageReaderThread.getLooper()));
++            jmgoImagePipeline = true;
++            LimeLog.info("JMGO decoded YUV image pipeline enabled");
++        }
++        catch (RuntimeException e) {
++            jmgoImagePipeline = false;
++            LimeLog.warning("JMGO image pipeline unavailable: " + e.getMessage());
++            clearDecodedImages();
++            if (decodedImageReader != null) {
++                decodedImageReader.close();
++                decodedImageReader = null;
++            }
++            if (decodedImageWriter != null) {
++                decodedImageWriter.close();
++                decodedImageWriter = null;
++            }
++        }
++    }
++
++    private void clearDecodedImages() {
++        Image image;
++        while ((image = decodedImageQueue.poll()) != null) {
++            image.close();
++        }
++    }
++
++    private void copyDecodedImage(Image source, Image destination) {
++        Image.Plane[] sourcePlanes = source.getPlanes();
++        Image.Plane[] destinationPlanes = destination.getPlanes();
++        if (sourcePlanes.length != destinationPlanes.length) {
++            throw new IllegalStateException("Mismatched YUV plane count");
++        }
++
++        for (int planeIndex = 0; planeIndex < sourcePlanes.length; planeIndex++) {
++            Image.Plane sourcePlane = sourcePlanes[planeIndex];
++            Image.Plane destinationPlane = destinationPlanes[planeIndex];
++            int planeWidth = planeIndex == 0 ? initialWidth : (initialWidth + 1) / 2;
++            int planeHeight = planeIndex == 0 ? initialHeight : (initialHeight + 1) / 2;
++            MoonBridge.copyYuvPlane(
++                    sourcePlane.getBuffer(), sourcePlane.getRowStride(), sourcePlane.getPixelStride(),
++                    destinationPlane.getBuffer(), destinationPlane.getRowStride(),
++                    destinationPlane.getPixelStride(), planeWidth, planeHeight);
++        }
++    }
++
+     private boolean tryConfigureDecoder(MediaCodecInfo selectedDecoderInfo, MediaFormat format, boolean throwOnCodecError) {
+         boolean configured = false;
+         try {
+@@ -675,7 +772,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+ 
+             MediaFormat mediaFormat = createBaseMediaFormat(mimeType);
+             // This will try low latency options until we find one that works (or we give up).
+-            boolean newFormat = MediaCodecHelper.setDecoderLowLatencyOptions(mediaFormat, selectedDecoderInfo, prefs.enableUltraLowLatency, tryNumber);
++            boolean newFormat = MediaCodecHelper.setDecoderLowLatencyOptions(
++                    mediaFormat, selectedDecoderInfo, prefs.enableUltraLowLatency, tryNumber);
+             //todo 色彩格式
+ //            MediaCodecInfo.CodecCapabilities codecCapabilities = selectedDecoderInfo.getCapabilitiesForType(mimeType);
+ //            int[] colorFormats=codecCapabilities.colorFormats;
+@@ -718,6 +816,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+         this.videoFormat = format;
+         this.refreshRate = redrawRate;
+ 
++        if ((format & MoonBridge.VIDEO_FORMAT_MASK_H264) != 0 &&
++                avcDecoder != null &&
++                avcDecoder.getName().equalsIgnoreCase("OMX.MS.AVC.Decoder") &&
++                prefs.framePacing == PreferenceConfiguration.FRAME_PACING_BALANCED) {
++            initializeJmgoImagePipeline();
++        }
++
+         return initializeDecoder(false);
+     }
+ 
+@@ -745,6 +850,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+                 nextInputBuffer = null;
+                 nextInputBufferIndex = -1;
+                 outputBufferQueue.clear();
++                clearDecodedImages();
++                outputPacingStarted = false;
+ 
+                 // If we just need a flush, do so now with all threads quiesced.
+                 if (codecRecoveryType.get() == CR_RECOVERY_TYPE_FLUSH) {
+@@ -1035,6 +1142,78 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+         Choreographer.getInstance().postFrameCallback(this);
+     }
+ 
++    private void startPacedPresentationThread() {
++        pacedPresentationThread = new Thread(() -> {
++            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
++            long framePeriodNs = 1_000_000_000L / Math.max(1, refreshRate);
++            long nextReleaseNs = 0;
++
++            while (!stopping) {
++                int reserveSize = decodedImageQueue.size();
++                if (!outputPacingStarted) {
++                    if (reserveSize < OUTPUT_BUFFER_QUEUE_START_THRESHOLD) {
++                        doCodecRecoveryIfRequired(CR_FLAG_CHOREOGRAPHER);
++                        LockSupport.parkNanos(1_000_000L);
++                        if (Thread.interrupted()) {
++                            return;
++                        }
++                        continue;
++                    }
++                    outputPacingStarted = true;
++                    nextReleaseNs = System.nanoTime();
++                    LimeLog.info("JMGO timer pacing started with " + reserveSize +
++                            " decoded frames reserved in image ring");
++                }
++
++                long nowNs = System.nanoTime();
++                if (nowNs < nextReleaseNs) {
++                    LockSupport.parkNanos(nextReleaseNs - nowNs);
++                    if (Thread.interrupted()) {
++                        return;
++                    }
++                    nowNs = System.nanoTime();
++                }
++
++                long schedulerDelayNs = nowNs - nextReleaseNs;
++                if (schedulerDelayNs >= 25_000_000L) {
++                    LimeLog.warning("JMGO timer scheduler delay: " +
++                            (schedulerDelayNs / 1_000_000L) + " ms");
++                }
++
++                Image nextImage = decodedImageQueue.poll();
++                if (nextImage != null) {
++                    Image writerImage = null;
++                    try {
++                        writerImage = decodedImageWriter.dequeueInputImage();
++                        copyDecodedImage(nextImage, writerImage);
++                        decodedImageWriter.queueInputImage(writerImage);
++                        writerImage = null;
++                        activeWindowVideoStats.totalFramesRendered++;
++                    }
++                    catch (RuntimeException e) {
++                        if (writerImage != null) {
++                            writerImage.close();
++                        }
++                        LimeLog.warning("JMGO image writer rejected frame: " + e.getMessage());
++                    }
++                    finally {
++                        nextImage.close();
++                    }
++                }
++                else {
++                    LimeLog.warning("JMGO timer image ring empty");
++                }
++
++                doCodecRecoveryIfRequired(CR_FLAG_CHOREOGRAPHER);
++                nextReleaseNs += framePeriodNs;
++                if (nextReleaseNs < nowNs - framePeriodNs) {
++                    nextReleaseNs = nowNs + framePeriodNs;
++                }
++            }
++        }, "Video - JMGO Pacer");
++        pacedPresentationThread.start();
++    }
++
+     private void startChoreographerThread() {
+         if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED) {
+             // Not using Choreographer in this pacing mode
+@@ -1060,6 +1239,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+         rendererThread = new Thread() {
+             @Override
+             public void run() {
++                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
+                 BufferInfo info = new BufferInfo();
+                 while (!stopping) {
+                     try {
+@@ -1108,26 +1288,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+                                 activeWindowVideoStats.totalFramesRendered++;
+                             }
+                             else {
+-                                // For balanced frame pacing case, the Choreographer callback will handle rendering.
+-                                // We just put all frames into the output buffer queue and let it handle things.
+-
+-                                // Discard the oldest buffer if we've exceeded our limit.
+-                                //
+-                                // NB: We have to do this on the producer side because the consumer may not
+-                                // run for a while (if there is a huge mismatch between stream FPS and display
+-                                // refresh rate).
+-                                if (outputBufferQueue.size() == OUTPUT_BUFFER_QUEUE_LIMIT) {
+-                                    try {
+-                                        videoDecoder.releaseOutputBuffer(outputBufferQueue.take(), false);
+-                                    } catch (InterruptedException e) {
+-                                        // We're shutting down, so we can just drop this buffer on the floor
+-                                        // and it will be reclaimed when the codec is released.
+-                                        return;
++                                if (jmgoImagePipeline) {
++                                    // Render immediately into ImageReader. The image ring owns pacing and
++                                    // transfers each YUV frame to the visible Surface later.
++                                    videoDecoder.releaseOutputBuffer(lastIndex, true);
++                                }
++                                else {
++                                    // For balanced frame pacing case, the presentation callback handles rendering.
++                                    if (outputBufferQueue.size() == OUTPUT_BUFFER_QUEUE_LIMIT) {
++                                        try {
++                                            videoDecoder.releaseOutputBuffer(outputBufferQueue.take(), false);
++                                        }
++                                        catch (InterruptedException e) {
++                                            return;
++                                        }
+                                     }
++                                    outputBufferQueue.add(lastIndex);
+                                 }
+-
+-                                // Add this buffer
+-                                outputBufferQueue.add(lastIndex);
+                             }
+ 
+                             // Add delta time to the totals (excluding probable outliers)
+@@ -1241,7 +1418,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+     @Override
+     public void start() {
+         startRendererThread();
+-        startChoreographerThread();
++        if (jmgoImagePipeline && prefs.framePacing == PreferenceConfiguration.FRAME_PACING_BALANCED) {
++            startPacedPresentationThread();
++        }
++        else {
++            outputPacingStarted = true;
++            startChoreographerThread();
++        }
+     }
+ 
+     // !!! May be called even if setup()/start() fails !!!
+@@ -1253,6 +1436,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+         if (rendererThread != null) {
+             rendererThread.interrupt();
+         }
++        if (pacedPresentationThread != null) {
++            pacedPresentationThread.interrupt();
++        }
+ 
+         // Stop any active codec recovery operations
+         synchronized (codecRecoveryMonitor) {
+@@ -1294,6 +1480,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+             }
+         }
+ 
++        if (pacedPresentationThread != null) {
++            try {
++                pacedPresentationThread.join();
++            }
++            catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            }
++        }
++
+         // Wait for the renderer thread to shut down
+         try {
+             rendererThread.join();
+@@ -1310,6 +1505,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+     @Override
+     public void cleanup() {
+         videoDecoder.release();
++        clearDecodedImages();
++        if (decodedImageReader != null) {
++            decodedImageReader.setOnImageAvailableListener(null, null);
++            decodedImageReader.close();
++            decodedImageReader = null;
++        }
++        if (decodedImageWriter != null) {
++            decodedImageWriter.close();
++            decodedImageWriter = null;
++        }
++        if (decodedImageReaderThread != null) {
++            decodedImageReaderThread.quitSafely();
++            decodedImageReaderThread = null;
++        }
+     }
+ 
+     @Override
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+index de2f617..b78ad60 100755
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -1,5 +1,7 @@
+ package com.limelight.nvstream.jni;
+ 
++import java.nio.ByteBuffer;
++
+ import com.limelight.nvstream.NvConnectionListener;
+ import com.limelight.nvstream.av.audio.AudioRenderer;
+ import com.limelight.nvstream.av.video.VideoDecoderRenderer;
+@@ -340,6 +342,11 @@ public class MoonBridge {
+         MoonBridge.connectionListener = null;
+     }
+ 
++    public static native void copyYuvPlane(ByteBuffer source, int sourceRowStride,
++                                           int sourcePixelStride, ByteBuffer destination,
++                                           int destinationRowStride, int destinationPixelStride,
++                                           int width, int height);
++
+     public static native int startConnection(String address, String appVersion, String gfeVersion,
+                                               String rtspSessionUrl, int serverCodecModeSupport,
+                                               int width, int height, int fps,
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+index 6b6e13a..1376d15 100644
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -41,6 +41,42 @@ static jmethodID BridgeClSetControllerLEDMethod;
+ static jbyteArray DecodedFrameBuffer;
+ static jshortArray DecodedAudioBuffer;
+ 
++JNIEXPORT void JNICALL
++Java_com_limelight_nvstream_jni_MoonBridge_copyYuvPlane(JNIEnv* env, jclass clazz,
++                                                         jobject sourceBuffer,
++                                                         jint sourceRowStride,
++                                                         jint sourcePixelStride,
++                                                         jobject destinationBuffer,
++                                                         jint destinationRowStride,
++                                                         jint destinationPixelStride,
++                                                         jint width,
++                                                         jint height) {
++    unsigned char* source = (*env)->GetDirectBufferAddress(env, sourceBuffer);
++    unsigned char* destination = (*env)->GetDirectBufferAddress(env, destinationBuffer);
++    if (source == NULL || destination == NULL || width <= 0 || height <= 0) {
++        return;
++    }
++
++    if (sourcePixelStride == destinationPixelStride) {
++        size_t rowBytes = (size_t)(width - 1) * sourcePixelStride + 1;
++        for (int row = 0; row < height; row++) {
++            memcpy(destination + (size_t)row * destinationRowStride,
++                   source + (size_t)row * sourceRowStride,
++                   rowBytes);
++        }
++    }
++    else {
++        for (int row = 0; row < height; row++) {
++            unsigned char* sourceRow = source + (size_t)row * sourceRowStride;
++            unsigned char* destinationRow = destination + (size_t)row * destinationRowStride;
++            for (int column = 0; column < width; column++) {
++                destinationRow[(size_t)column * destinationPixelStride] =
++                    sourceRow[(size_t)column * sourcePixelStride];
++            }
++        }
++    }
++}
++
+ void DetachThread(void* context) {
+     (*JVM)->DetachCurrentThread(JVM);
+ }

@@ -1,0 +1,81 @@
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+index b5321c1..011bb21 100644
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -59,7 +59,7 @@ typedef struct _LENTRY_INTERNAL {
+ 
+ // Init
+ void initializeVideoDepacketizer(int pktSize) {
+-    LbqInitializeLinkedBlockingQueue(&decodeUnitQueue, 15);
++    LbqInitializeLinkedBlockingQueue(&decodeUnitQueue, 60);
+ 
+     nextFrameNumber = 1;
+     startFrameNumber = 0;
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+index a2def84..1ee5590 100644
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -253,6 +253,14 @@ void notifyKeyFrameReceived(void) {
+ 
+ // Decoder thread proc
+ static void VideoDecoderThreadProc(void* context) {
++    const uint64_t presentationBufferMs = 150;
++    const uint64_t decodedOutputLeadMs = 70;
++    uint64_t baseLocalTimeMs = 0;
++    uint32_t basePresentationTimeMs = 0;
++    uint32_t lastPresentationTimeMs = 0;
++    bool presentationClockStarted = false;
++    unsigned int underrunCount = 0;
++
+     while (!PltIsThreadInterrupted(&decoderThread)) {
+         VIDEO_FRAME_HANDLE frameHandle;
+         PDECODE_UNIT decodeUnit;
+@@ -261,6 +269,48 @@ static void VideoDecoderThreadProc(void* context) {
+             return;
+         }
+ 
++        uint64_t nowMs = PltGetMillis();
++        uint32_t presentationTimeMs = decodeUnit->presentationTimeMs;
++        uint32_t presentationDeltaMs = presentationTimeMs - lastPresentationTimeMs;
++        bool discontinuity = presentationClockStarted &&
++            (presentationTimeMs <= lastPresentationTimeMs || presentationDeltaMs > 100);
++
++        if (discontinuity) {
++            Limelog("JMGO host presentation discontinuity: %u ms\n", presentationDeltaMs);
++        }
++        if (!presentationClockStarted || discontinuity) {
++            baseLocalTimeMs = nowMs + presentationBufferMs;
++            basePresentationTimeMs = presentationTimeMs;
++            presentationClockStarted = true;
++            Limelog("JMGO input presentation buffer started with %llu ms lead\n",
++                    (unsigned long long)presentationBufferMs);
++        }
++
++        uint64_t targetTimeMs = baseLocalTimeMs +
++            (uint32_t)(presentationTimeMs - basePresentationTimeMs) - decodedOutputLeadMs;
++        if (targetTimeMs > nowMs) {
++            uint64_t sleepMs = targetTimeMs - nowMs;
++            PltSleepMsInterruptible(&decoderThread,
++                                    sleepMs > INT_MAX ? INT_MAX : (int)sleepMs);
++            if (PltIsThreadInterrupted(&decoderThread)) {
++                LiCompleteVideoFrame(frameHandle, DR_OK);
++                return;
++            }
++        }
++        else if (nowMs - targetTimeMs >= 25) {
++            underrunCount++;
++            Limelog("JMGO input presentation buffer underrun %u: %llu ms late\n",
++                    underrunCount,
++                    (unsigned long long)(nowMs - targetTimeMs));
++        }
++
++        lastPresentationTimeMs = presentationTimeMs;
++
++        // MediaCodec propagates input PTS into the Surface buffer even when the Java
++        // renderer requests immediate display. Replace bursty network enqueue time with
++        // the smoothed host-presentation clock so OMX never batches equal timestamps.
++        decodeUnit->enqueueTimeMs = targetTimeMs;
++
+         LiCompleteVideoFrame(frameHandle, VideoCallbacks.submitDecodeUnit(decodeUnit));
+     }
+ }
