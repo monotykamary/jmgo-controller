@@ -4,9 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  jmgo-controller: 'link:'
+
 importers:
 
   .:
+    dependencies:
+      jmgo-controller:
+        specifier: 'link:'
+        version: 'link:'
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

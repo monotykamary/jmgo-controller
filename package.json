@@ -1,6 +1,6 @@
 {
   "name": "jmgo-controller",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local-network remote control, ADB automation, and verified Play APK delivery for JMGO projectors",
   "type": "module",
   "bin": {
@@ -42,5 +42,8 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "jmgo-controller": "link:"
   }
 }

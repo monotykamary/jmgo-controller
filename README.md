@@ -48,15 +48,26 @@ From a checkout:
 pnpm install
 pnpm build
 pnpm link --global
-export JMGO_HOST=192.168.1.50
 ```
 
-Find the projector and inspect dependencies:
+Discover and remember the projector, then inspect dependencies:
 
 ```bash
 jmgo discover
-jmgo discover --network 192.168.0.0/22
+jmgo discover set
+# For a larger or different subnet:
+jmgo discover set --network 192.168.0.0/22
+jmgo host show
 jmgo doctor
+```
+
+The saved host is written atomically with user-only permissions to
+`~/.config/jmgo-controller/config.json` (or the platform equivalent). Resolution priority is
+`--host`, then `JMGO_HOST`, then the saved host. Manage it explicitly with:
+
+```bash
+jmgo host set 192.168.1.50
+jmgo host clear
 ```
 
 ## Native remote control

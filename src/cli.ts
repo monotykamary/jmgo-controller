@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { Adb } from "./adb.js";
+import { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";
 import { discover } from "./discovery.js";
 import { installFromPlay } from "./play.js";
 import { findExecutable, runProcess } from "./process.js";
@@ -9,7 +10,8 @@ import { keyCodes, Remote, type RemoteKey } from "./remote.js";
 const help = `jmgo-controller
 
 Usage:
-  jmgo discover [--network CIDR] [--timeout MS]
+  jmgo discover [set] [--network CIDR] [--timeout MS]
+  jmgo host <show|set IP|clear>
   jmgo remote [--host IP] status [--include-identifiers]
   jmgo remote [--host IP] volume [up|down|set LEVEL]
   jmgo remote [--host IP] key <${Object.keys(keyCodes).join("|")}>
@@ -37,18 +39,22 @@ function takeFlag(args: string[], name: string): boolean {
   return true;
 }
 
-function hostFrom(args: string[]): string {
-  const host = takeOption(args, "--host") ?? process.env.JMGO_HOST;
-  if (!host) throw new Error("projector host required: pass --host or set JMGO_HOST");
+async function hostFrom(args: string[]): Promise<string> {
+  const host = takeOption(args, "--host") ?? process.env.JMGO_HOST ?? (await loadSavedHost());
+  if (!host) {
+    throw new Error(
+      "projector host required: run jmgo discover set, pass --host, or set JMGO_HOST",
+    );
+  }
   return host;
 }
 
 async function adbFrom(args: string[]): Promise<Adb> {
-  return Adb.create(hostFrom(args));
+  return Adb.create(await hostFrom(args));
 }
 
 async function remoteCommand(args: string[]): Promise<void> {
-  const host = hostFrom(args);
+  const host = await hostFrom(args);
   const command = args.shift();
   const remote = new Remote(host);
   if (command === "status") {
@@ -111,7 +117,7 @@ async function playCommand(args: string[]): Promise<void> {
     if (!packageName) throw new Error("info requires a package name");
     await runProcess(gplaydl as string, ["info", packageName], { inherit: true });
   } else if (command === "install") {
-    const host = hostFrom(args);
+    const host = await hostFrom(args);
     const packageName = args.shift();
     if (!packageName) throw new Error("install requires a package name");
     const languages = takeOption(args, "--languages");
@@ -139,15 +145,38 @@ async function main(): Promise<void> {
   }
   const command = args.shift();
   if (command === "discover") {
+    const shouldSave = args[0] === "set";
+    if (shouldSave) args.shift();
     const network = takeOption(args, "--network");
     const timeout = Number(takeOption(args, "--timeout") ?? 200);
-    console.log((await discover(network, timeout)).join("\n"));
+    const hosts = await discover(network, timeout);
+    if (!shouldSave) console.log(hosts.join("\n"));
+    else if (hosts.length === 0) throw new Error("no JMGO projector found");
+    else if (hosts.length > 1) {
+      throw new Error(`multiple projectors found (${hosts.join(", ")}); use jmgo host set IP`);
+    } else {
+      await saveHost(hosts[0] as string);
+      console.log(`saved ${hosts[0]} to ${configPath()}`);
+    }
+  } else if (command === "host") {
+    const action = args.shift();
+    if (action === "show") console.log((await loadSavedHost()) ?? "not set");
+    else if (action === "set") {
+      const host = args.shift();
+      if (!host) throw new Error("host set requires an IP address or hostname");
+      await saveHost(host);
+      console.log(`saved ${host} to ${configPath()}`);
+    } else if (action === "clear") {
+      await clearSavedHost();
+      console.log(`cleared ${configPath()}`);
+    } else throw new Error("host command must be show, set, or clear");
   } else if (command === "remote") await remoteCommand(args);
   else if (command === "adb") await adbCommand(args);
   else if (command === "play") await playCommand(args);
   else if (command === "doctor") {
     const report = {
-      host: takeOption(args, "--host") ?? process.env.JMGO_HOST ?? null,
+      host:
+        takeOption(args, "--host") ?? process.env.JMGO_HOST ?? (await loadSavedHost()) ?? null,
       adb: await findExecutable("adb"),
       apksigner: await findExecutable("apksigner"),
       gplaydl: await findExecutable("gplaydl"),

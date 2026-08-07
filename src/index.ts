@@ -1,4 +1,5 @@
 export { Adb, AdbError } from "./adb.js";
+export { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";
 export { discover } from "./discovery.js";
 export { installFromPlay, PlayError, verifyApkSigners } from "./play.js";
 export {
