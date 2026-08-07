@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+.coverage
+htmlcov/
+.DS_Store
+
+# Never commit downloaded applications, Android artifacts, or credentials.
+*.apk
+*.apks
+*.apkm
+*.xapk
+*.aab
+*.obb
+*.dm
+secrets.*
+.env
+.env.*
+!.env.example
+config.json
+auth-*.json

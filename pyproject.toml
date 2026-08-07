@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jmgo-controller"
+version = "0.1.0"
+description = "Local-network remote control, ADB automation, and verified Play APK delivery for JMGO projectors"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "JMGO Controller contributors" }]
+keywords = ["jmgo", "projector", "android-tv", "adb", "remote-control"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Home Automation",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["build>=1.2", "pytest>=8", "ruff>=0.9"]
+play = ["gplaydl>=4.2.1,<5"]
+
+[project.scripts]
+jmgo = "jmgo_controller.cli:main"
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jmgo_controller"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
