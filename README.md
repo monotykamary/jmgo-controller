@@ -14,6 +14,7 @@ The protocol was validated on a JMGO S901 running Bonfire OS. Other models may u
 - Send navigation, volume, home, settings, and power events over TCP port 9005.
 - List, install, uninstall, and launch Android applications through ADB.
 - Capture screenshots and inspect the foreground Android activity and audio state.
+- Use a Mac keyboard and trackpad as control-only Android HID devices through `scrcpy`.
 - Download Play APK splits with `gplaydl`, verify every split has the same signing certificate, and install them in one ADB session.
 - Redact serial numbers and Bluetooth addresses and strip unsafe Unicode formatting by default.
 - Import the protocol, remote, ADB, discovery, and Play APIs from TypeScript or JavaScript.
@@ -30,6 +31,7 @@ Some Bonfire OS builds expose unauthenticated ADB over the local network. Anyone
 - pnpm 10 for development
 - A JMGO projector reachable on the same LAN
 - Android Platform Tools for ADB commands
+- Optional keyboard, trackpad, and screen control: `scrcpy`
 - Optional Play support:
   - `gplaydl` 4.x
   - Android SDK Build Tools providing `apksigner`
@@ -38,6 +40,7 @@ On macOS:
 
 ```bash
 brew install --cask android-platform-tools
+brew install scrcpy
 pipx install gplaydl
 ```
 
@@ -110,6 +113,28 @@ jmgo adb uninstall com.example.app
 ```
 
 System applications may not be removable by the ordinary ADB shell. The CLI intentionally does not attempt root access or system partition modification.
+
+## Mac keyboard and trackpad with scrcpy
+
+Use the saved projector host and forward the Mac keyboard and trackpad as Android UHID devices without mirroring video or audio:
+
+```bash
+jmgo scrcpy
+```
+
+Keep a mirrored control window instead:
+
+```bash
+jmgo scrcpy --mirror
+```
+
+Additional scrcpy options can be passed after `--`:
+
+```bash
+jmgo scrcpy --mirror -- --max-fps=30 --stay-awake
+```
+
+The command connects ADB first and then runs `scrcpy` interactively. Exit scrcpy to return to the shell. Keyboard and pointer behavior can vary by Android TV application.
 
 ## Verified Play delivery
 

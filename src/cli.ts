@@ -6,6 +6,7 @@ import { discover } from "./discovery.js";
 import { installFromPlay } from "./play.js";
 import { findExecutable, runProcess } from "./process.js";
 import { keyCodes, Remote, type RemoteKey } from "./remote.js";
+import { runScrcpy } from "./scrcpy.js";
 
 const help = `jmgo-controller
 
@@ -17,6 +18,7 @@ Usage:
   jmgo remote [--host IP] key <${Object.keys(keyCodes).join("|")}>
   jmgo remote [--host IP] watch [--include-identifiers]
   jmgo adb [--host IP] <info|current|audio|packages|install|uninstall|launch|screenshot>
+  jmgo scrcpy [--host IP] [--mirror] [-- SCRCPY_ARGS...]
   jmgo play <link|search|info>
   jmgo play [--host IP] install PACKAGE [--arch tv] [--languages LIST]
   jmgo doctor [--host IP]
@@ -101,6 +103,14 @@ async function adbCommand(args: string[]): Promise<void> {
   } else throw new Error("unknown adb command");
 }
 
+async function scrcpyCommand(args: string[]): Promise<void> {
+  const host = await hostFrom(args);
+  const mirror = takeFlag(args, "--mirror");
+  const separator = args.indexOf("--");
+  if (separator >= 0) args.splice(separator, 1);
+  await runScrcpy(host, { mirror, extraArgs: args });
+}
+
 async function playCommand(args: string[]): Promise<void> {
   const command = args.shift();
   const gplaydl = await findExecutable("gplaydl");
@@ -172,17 +182,21 @@ async function main(): Promise<void> {
     } else throw new Error("host command must be show, set, or clear");
   } else if (command === "remote") await remoteCommand(args);
   else if (command === "adb") await adbCommand(args);
+  else if (command === "scrcpy") await scrcpyCommand(args);
   else if (command === "play") await playCommand(args);
   else if (command === "doctor") {
     const report = {
       host:
         takeOption(args, "--host") ?? process.env.JMGO_HOST ?? (await loadSavedHost()) ?? null,
       adb: await findExecutable("adb"),
+      scrcpy: await findExecutable("scrcpy"),
       apksigner: await findExecutable("apksigner"),
       gplaydl: await findExecutable("gplaydl"),
     };
     console.log(JSON.stringify(report, null, 2));
-    if (!report.host || !report.adb || !report.apksigner || !report.gplaydl) process.exitCode = 1;
+    if (!report.host || !report.adb || !report.scrcpy || !report.apksigner || !report.gplaydl) {
+      process.exitCode = 1;
+    }
   } else throw new Error(`unknown command: ${command}`);
 }
 

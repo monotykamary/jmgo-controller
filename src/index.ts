@@ -11,3 +11,4 @@ export {
   setVolumePacket,
 } from "./protocol.js";
 export { keyCodes, Remote, type RemoteKey } from "./remote.js";
+export { buildScrcpyArgs, runScrcpy, ScrcpyError, type ScrcpyOptions } from "./scrcpy.js";
