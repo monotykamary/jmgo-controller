@@ -4,7 +4,7 @@ Contributions are welcome, especially protocol captures from additional JMGO mod
 
 ## Development
 
-Requires Node.js 20 or newer and pnpm 11.
+Requires Node.js 20 or newer and pnpm 10.
 
 ```bash
 pnpm install

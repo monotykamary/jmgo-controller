@@ -27,7 +27,7 @@ Some Bonfire OS builds expose unauthenticated ADB over the local network. Anyone
 ## Requirements
 
 - Node.js 20 or newer
-- pnpm 11 for development
+- pnpm 10 for development
 - A JMGO projector reachable on the same LAN
 - Android Platform Tools for ADB commands
 - Optional Play support:
