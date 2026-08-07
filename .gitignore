@@ -1,14 +1,9 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.ruff_cache/
-.venv/
-venv/
+node_modules/
 dist/
-build/
-.coverage
-htmlcov/
+.test-dist/
+coverage/
+*.tsbuildinfo
+.pnpm-debug.log*
 .DS_Store
 
 # Never commit downloaded applications, Android artifacts, or credentials.

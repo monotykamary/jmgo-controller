@@ -1,17 +1,19 @@
 # jmgo-controller
 
-An unofficial, local-first CLI for JMGO projectors running Bonfire OS. It combines the projector's native LAN remote protocol, Android Debug Bridge automation, and an optional verified Google Play delivery pipeline.
+An unofficial, local-first TypeScript CLI and library for JMGO projectors running Bonfire OS. It combines the projector's native LAN protocol, Android Debug Bridge automation, and an optional verified Google Play delivery pipeline.
 
 The protocol was validated on a JMGO S901 running Bonfire OS. Other models may use different key codes or transports. This project is not affiliated with JMGO or Google.
 
 ## Features
 
+- Discover JMGO endpoints on the local network.
 - Read projector state, including current volume and firmware information.
-- Send navigation, volume, home, settings, and power key events over TCP port 9005.
+- Send navigation, volume, home, settings, and power events over TCP port 9005.
 - List, install, uninstall, and launch Android applications through ADB.
-- Capture screenshots and inspect the foreground Android activity.
-- Download device-targeted Play APK splits with `gplaydl`, verify every split has the same Google signing certificate, and install them in one ADB session.
-- Redact serial numbers and Bluetooth addresses from status output by default.
+- Capture screenshots and inspect the foreground Android activity and audio state.
+- Download Play APK splits with `gplaydl`, verify every split has the same signing certificate, and install them in one ADB session.
+- Redact serial numbers and Bluetooth addresses and strip unsafe Unicode formatting by default.
+- Import the protocol, remote, ADB, discovery, and Play APIs from TypeScript or JavaScript.
 
 ## Security warning
 
@@ -21,7 +23,8 @@ Some Bonfire OS builds expose unauthenticated ADB over the local network. Anyone
 
 ## Requirements
 
-- Python 3.10 or newer
+- Node.js 20 or newer
+- pnpm 11 for development
 - A JMGO projector reachable on the same LAN
 - Android Platform Tools for ADB commands
 - Optional Play support:
@@ -42,23 +45,16 @@ Install Android SDK Build Tools through Android Studio or `sdkmanager`; ensure `
 From a checkout:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .
+pnpm install
+pnpm build
+pnpm link --global
 export JMGO_HOST=192.168.1.50
 ```
 
-Or install the CLI in an isolated environment:
-
-```bash
-pipx install .
-```
-
-Find the projector and run diagnostics:
+Find the projector and inspect dependencies:
 
 ```bash
 jmgo discover
-# For a larger or different subnet:
 jmgo discover --network 192.168.0.0/22
 jmgo doctor
 ```
@@ -77,13 +73,13 @@ jmgo remote key home
 jmgo remote watch
 ```
 
-Status output redacts stable device identifiers. Reveal them only when explicitly needed:
+Status output redacts stable identifiers. Reveal them only when explicitly needed:
 
 ```bash
 jmgo remote status --include-identifiers
 ```
 
-Power key behavior differs by firmware. Test non-destructive navigation keys first.
+Power behavior differs by firmware. Test non-destructive navigation keys first.
 
 ## ADB
 
@@ -122,23 +118,33 @@ Download a TV/ARMv7 split set, verify signer consistency, install it, and delete
 jmgo play install org.videolan.vlc
 ```
 
-Keep downloaded files only when deliberately requested:
+Keep downloads only when deliberately requested:
 
 ```bash
 jmgo play install org.videolan.vlc --keep-downloads ./downloads/vlc
 ```
 
-Downloaded APKs, OBBs, token files, and common secret files are ignored by Git. Before every release, inspect `git status` and use a secret scanner.
-
 ### Trust model
 
-1. `gplaydl` downloads APKs from Google Play and checks the SHA-256 hashes declared by Google's delivery response.
-2. `jmgo-controller` invokes the Android SDK's `apksigner` on every downloaded APK.
+1. `gplaydl` downloads from Google Play and checks hashes declared by Google's delivery response.
+2. `jmgo-controller` invokes Android SDK `apksigner` on every downloaded APK.
 3. Installation is refused if any split is invalid or has a different signing certificate.
 4. Original APKs are installed together without merging or re-signing.
 5. Temporary downloads use a private directory and are removed after installation.
 
 This verifies transport integrity and split consistency. It does not make an application trustworthy, prove Google endorsement, bypass licensing, or make an uncertified projector Play Protect certified. Applications requiring Google Play Services, Play Integrity, DRM certification, or runtime licensing may still fail.
+
+## Library usage
+
+```ts
+import { Remote, discover } from "jmgo-controller";
+
+const hosts = await discover("192.168.1.0/24");
+const projector = new Remote(hosts[0]);
+
+console.log(await projector.readState());
+await projector.press("volume-down");
+```
 
 ## Credential policy
 
@@ -149,16 +155,15 @@ Never commit:
 - projector serial numbers, Bluetooth addresses, screenshots, or local IP configuration
 - `.env`, `config.json`, or authentication caches
 
-The project passes control to `gplaydl link` instead of implementing authentication. Environment variables are inherited by child tools but are never logged by this CLI. See [SECURITY.md](SECURITY.md) for reporting guidance.
+The project delegates authentication to `gplaydl link`. Environment variables are inherited by child tools but are never logged by this CLI. See [SECURITY.md](SECURITY.md).
 
 ## Development
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-pytest
-ruff check .
+pnpm install
+pnpm check
+pnpm test
+pnpm pack
 ```
 
 ## License

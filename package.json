@@ -1,0 +1,46 @@
+{
+  "name": "jmgo-controller",
+  "version": "0.2.0",
+  "description": "Local-network remote control, ADB automation, and verified Play APK delivery for JMGO projectors",
+  "type": "module",
+  "bin": {
+    "jmgo": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs dist",
+    "build": "pnpm clean && tsc",
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "prepack": "pnpm build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "keywords": [
+    "jmgo",
+    "projector",
+    "android-tv",
+    "adb",
+    "remote-control",
+    "home-automation"
+  ],
+  "license": "MIT",
+  "author": "JMGO Controller contributors",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

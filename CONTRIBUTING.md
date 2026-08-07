@@ -4,12 +4,13 @@ Contributions are welcome, especially protocol captures from additional JMGO mod
 
 ## Development
 
+Requires Node.js 20 or newer and pnpm 11.
+
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-pytest
-ruff check .
+pnpm install
+pnpm check
+pnpm test
+pnpm pack
 ```
 
 Add tests for protocol changes. Do not include captures containing serial numbers, Bluetooth addresses, account data, local network details, screenshots, or proprietary APKs.
