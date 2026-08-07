@@ -1,5 +1,8 @@
 # jmgo-controller
 
+[![CI](https://github.com/monotykamary/jmgo-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/monotykamary/jmgo-controller/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 An unofficial, local-first TypeScript CLI and library for JMGO projectors running Bonfire OS. It combines the projector's native LAN protocol, Android Debug Bridge automation, and an optional verified Google Play delivery pipeline.
 
 The protocol was validated on a JMGO S901 running Bonfire OS. Other models may use different key codes or transports. This project is not affiliated with JMGO or Google.

@@ -1,6 +1,6 @@
 {
   "name": "jmgo-controller",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Local-network remote control, ADB automation, and verified Play APK delivery for JMGO projectors",
   "type": "module",
   "bin": {
@@ -39,6 +39,14 @@
   ],
   "license": "MIT",
   "author": "JMGO Controller contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monotykamary/jmgo-controller.git"
+  },
+  "bugs": {
+    "url": "https://github.com/monotykamary/jmgo-controller/issues"
+  },
+  "homepage": "https://github.com/monotykamary/jmgo-controller#readme",
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
