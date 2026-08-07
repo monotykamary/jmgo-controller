@@ -203,7 +203,10 @@ pnpm install
 pnpm check
 pnpm test
 pnpm pack
+pnpm simulate:pacing
 ```
+
+The headless [decoder-pacing sandbox](experiments/decoder-pacing/README.md) reconstructs measured JMGO frame stalls locally and never contacts the projector.
 
 ## License
 

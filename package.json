@@ -22,7 +22,8 @@
     "clean": "node scripts/clean.mjs dist",
     "build": "pnpm clean && tsc",
     "check": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js experiments/decoder-pacing/*.test.mjs",
+    "simulate:pacing": "node experiments/decoder-pacing/simulate.mjs",
     "prepack": "pnpm build"
   },
   "engines": {
