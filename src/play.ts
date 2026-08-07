@@ -12,7 +12,8 @@ export type ProcessRunner = (
   options?: { inherit?: boolean; allowFailure?: boolean },
 ) => Promise<ProcessResult>;
 
-const digestPattern = /Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F:]+)/;
+const digestPattern =
+  /(?:Signer #\d+|V\d+(?:\.\d+)* Signer):? certificate SHA-256 digest: ([0-9a-fA-F:]+)/g;
 const packagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
 
 export async function verifyApkSigners(
@@ -23,9 +24,13 @@ export async function verifyApkSigners(
   const digests = new Set<string>();
   for (const file of files) {
     const result = await runner(apksigner, ["verify", "--print-certs", file]);
-    const match = digestPattern.exec(result.stdout.toString());
-    if (!match?.[1]) throw new PlayError(`could not read signer certificate from ${file}`);
-    digests.add(match[1].replaceAll(":", "").toLowerCase());
+    const signerSet = [...result.stdout.toString().matchAll(digestPattern)]
+      .map((match) => match[1]?.replaceAll(":", "").toLowerCase())
+      .filter((digest): digest is string => Boolean(digest))
+      .sort()
+      .join(",");
+    if (!signerSet) throw new PlayError(`could not read signer certificate from ${file}`);
+    digests.add(signerSet);
   }
   if (digests.size !== 1) {
     throw new PlayError("refusing installation: APK splits have different signing certificates");

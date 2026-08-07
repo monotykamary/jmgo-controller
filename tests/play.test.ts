@@ -4,11 +4,15 @@ import { PlayError, verifyApkSigners, type ProcessRunner } from "../src/play.js"
 
 function runnerFor(digests: string[]): ProcessRunner {
   let index = 0;
-  return async () => ({
-    code: 0,
-    stderr: Buffer.alloc(0),
-    stdout: Buffer.from(`Signer #1 certificate SHA-256 digest: ${digests[index++]}`),
-  });
+  return async () => {
+    const digest = digests[index++];
+    const prefix = index % 2 === 0 ? "V3.0 Signer:" : "Signer #1";
+    return {
+      code: 0,
+      stderr: Buffer.alloc(0),
+      stdout: Buffer.from(`${prefix} certificate SHA-256 digest: ${digest}`),
+    };
+  };
 }
 
 test("matching split signers are accepted", async () => {
