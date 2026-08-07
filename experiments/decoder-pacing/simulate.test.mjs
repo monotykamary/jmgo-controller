@@ -17,6 +17,16 @@ test("measured stall model produces periodic long decoder gaps", () => {
   assert.ok(result.decoder.gapsOver33Ms >= 10);
 });
 
+test("transport load does not erase a fixed scheduler pause", () => {
+  const baseline = runSimulation(fixture, { seed: 901 });
+  const lowerLoad = runSimulation(fixture, { seed: 901, loadScale: 0.48 });
+  const shorterSchedulerPause = runSimulation(fixture, { seed: 901, schedulerScale: 0.48 });
+  assert.equal(lowerLoad.decoder.maximumArrivalGapMs, baseline.decoder.maximumArrivalGapMs);
+  assert.ok(
+    shorterSchedulerPause.decoder.maximumArrivalGapMs < baseline.decoder.maximumArrivalGapMs,
+  );
+});
+
 test("stall sweep improves monotonically at the endpoints", () => {
   const sweep = runSweep(fixture, { scales: [1, 0.5, 0.2], seed: 901 });
   assert.ok(sweep[2].decoderMaximumGapMs < sweep[0].decoderMaximumGapMs);

@@ -39,8 +39,9 @@ export function generateDecoderTrace(fixture, options = {}) {
   const model = fixture.model;
   const random = makeRandom(options.seed ?? 901);
   const stallDurations = shuffled(model.stallDurationsMs, random);
-  const requestedStallScale = options.stallScale ?? 1;
-  const stallScale = requestedStallScale * model.stallCalibration;
+  const schedulerScale = options.schedulerScale ?? options.stallScale ?? 1;
+  const loadScale = options.loadScale ?? 1;
+  const stallScale = schedulerScale * model.stallCalibration;
   const frames = [];
   let decoderAvailableMs = 0;
   let stallIndex = 0;
@@ -59,7 +60,8 @@ export function generateDecoderTrace(fixture, options = {}) {
     }
 
     const isBacklogged = serviceStartMs - ptsMs > frameMs;
-    const serviceMs = isBacklogged ? model.catchUpServiceMs : model.decoderServiceMs;
+    const serviceMs =
+      (isBacklogged ? model.catchUpServiceMs : model.decoderServiceMs) * loadScale;
     let completionMs = serviceStartMs + serviceMs;
 
     if (completionMs >= nextStallMs) {
@@ -158,8 +160,10 @@ export function runSimulation(fixture, options = {}) {
       durationSeconds: trace.durationMs / 1000,
       requestedFps: trace.fps,
       periodicStallMs: fixture.model.stallPeriodMs,
-      stallScale: options.stallScale ?? 1,
-      effectiveStallScale: (options.stallScale ?? 1) * fixture.model.stallCalibration,
+      schedulerScale: options.schedulerScale ?? options.stallScale ?? 1,
+      effectiveSchedulerScale:
+        (options.schedulerScale ?? options.stallScale ?? 1) * fixture.model.stallCalibration,
+      loadScale: options.loadScale ?? 1,
       seed: options.seed ?? 901,
       warning: "SurfaceFlinger histograms contain no ordering; periodic decoder stalls and catch-up bursts are reconstructed.",
     },
@@ -176,12 +180,16 @@ export function runSimulation(fixture, options = {}) {
 
 export function runSweep(fixture, options = {}) {
   const scales = options.scales ?? [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2];
-  return scales.map((stallScale) => {
-    const result = runSimulation(fixture, { ...options, stallScale });
+  const parameter = options.parameter ?? "scheduler";
+  return scales.map((scale) => {
+    const scaledOptions =
+      parameter === "load" ? { ...options, loadScale: scale } : { ...options, schedulerScale: scale };
+    const result = runSimulation(fixture, scaledOptions);
     const balanced = result.strategies.find((item) => item.name === "moonlight-balanced");
     const buffer3 = result.strategies.find((item) => item.name === "buffer-3");
     return {
-      stallScale,
+      parameter,
+      scale,
       decoderMaximumGapMs: result.decoder.maximumArrivalGapMs,
       balancedMaximumFreezeMs: balanced.maximumFreezeMs,
       balancedRepeatedVsyncs: balanced.repeatedVsyncs,
@@ -228,13 +236,21 @@ async function main() {
   const fixturePath = stringAfter("--fixture");
   const fixtureUrl = fixturePath ? pathToFileURL(resolve(fixturePath)) : defaultFixtureUrl;
   const fixture = JSON.parse(await readFile(fixtureUrl, "utf8"));
+  const legacyStallScale = stringAfter("--stall-scale");
   const options = {
     durationSeconds: numberAfter("--duration", fixture.stream.durationSeconds),
     seed: numberAfter("--seed", 901),
-    stallScale: numberAfter("--stall-scale", 1),
+    schedulerScale:
+      legacyStallScale === undefined
+        ? numberAfter("--scheduler-scale", 1)
+        : numberAfter("--stall-scale", 1),
+    loadScale: numberAfter("--load-scale", 1),
   };
-  if (args.includes("--sweep")) {
-    const sweep = runSweep(fixture, options);
+  if (args.includes("--sweep") || args.includes("--load-sweep")) {
+    const sweep = runSweep(fixture, {
+      ...options,
+      parameter: args.includes("--load-sweep") ? "load" : "scheduler",
+    });
     if (json) console.log(JSON.stringify(sweep, null, 2));
     else console.table(sweep);
     return;
