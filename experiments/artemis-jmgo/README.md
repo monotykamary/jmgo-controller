@@ -1,22 +1,22 @@
 # JMGO Artemis 60 FPS client experiment
 
-This experiment patches Artemis `v20.2.6` (`4de0227fb6ae5c9ad9f7cc486aed7c3571f5f62f`) for the JMGO S901's proprietary `OMX.MS.AVC.Decoder`. It preserves 720p60 or 1080p60 H.264 quality and audio while absorbing the periodic host-delivery and decoder-output bursts that produced visible 90–114 ms freezes.
+This experiment patches Artemis `v20.2.6` (`4de0227fb6ae5c9ad9f7cc486aed7c3571f5f62f`) for the JMGO S901's proprietary `OMX.MS.AVC.Decoder`. It preserves 720p60 or 1080p60 H.264 quality and audio while decoupling the periodic host-delivery and decoder-output bursts that produced visible 90–114 ms freezes.
 
 The debug build installs alongside Artemis as `com.limelight.noirdebug` with the label **JMGO Artemis Lab**.
 
 ## What changed
 
-The solution uses buffering at each blocking boundary rather than changing H.264 quality:
+The solution decouples each blocking boundary without adding an artificial steady-state lead:
 
-- moonlight-common-c retains up to 60 complete encoded frames and paces them from host presentation timestamps with 150 ms lead.
-- MediaCodec is fed 70 ms ahead and its bursty network enqueue timestamps are replaced with the smoothed presentation clock.
+- moonlight-common-c can retain up to 60 complete encoded frames and paces them from host presentation timestamps with zero artificial lead.
+- MediaCodec is fed as soon as each frame is due, while bursty network enqueue timestamps are replaced with the smoothed presentation clock.
 - `OMX.MS.AVC.Decoder` outputs into a 12-slot `YUV_420_888` ImageReader.
-- A monotonic urgent-display thread starts with four decoded frames and presents one every 16.67 ms through ImageWriter.
+- A monotonic urgent-display thread starts on the first decoded image and presents one every 16.67 ms through ImageWriter. The ring can still grow during a decoder burst without delaying normal frames.
 - Each writer image inherits the decoder's crop rectangle. SurfaceFlinger scales 1280×720 content across the 1920×1080 video layer and presents 1920×1080 content directly, avoiding an uninitialized border in either mode.
 - Plane copies use three direct-buffer JNI calls per frame; native stride-aware `memcpy` is required because Java row copies only reached 45–49 FPS.
-- AudioTrack receives a 120 ms device buffer. A preallocated 32-frame PCM pool moves blocking writes to an audio-priority worker, preserving samples without blocking Moonlight's receive callback.
+- AudioTrack uses a 10 ms device buffer. A preallocated 32-frame PCM pool moves blocking writes to an audio-priority worker, preserving samples without blocking Moonlight's receive callback.
 
-This adds roughly 150 ms of video latency. That is intentional: the measured stalls cannot be hidden by Moonlight's one-frame effective reserve.
+The first certified prototype intentionally added about 130 ms of video reserve and used a 120 ms AudioTrack. Hardware sweeps after the image-ring fix proved those steady-state reserves unnecessary: the final profile removes the full video reserve and reduces AudioTrack capacity by 110 ms while retaining the queues that absorb transient stalls.
 
 ## Build
 
@@ -90,6 +90,8 @@ A nonintrusive 60-second controlled-motion run used the same H.264 pipeline at 1
 - encoded queue overflows and underruns: 0
 - decoded image-ring empties and timer delays: 0
 - audio queue drops, AudioTrack failures, and legacy pending-audio backlogs: 0
+
+A second nonintrusive 60-second run certified the final low-latency profile: zero encoded-input lead, presentation on the first decoded image, and a 10 ms AudioTrack. It presented 3,617/3,617 intervals at 15–18 ms with a 17 ms maximum, no gaps of 34 ms or longer, and zero network, decoder, image-ring, compositor, or audio faults.
 
 ## Patch layout
 

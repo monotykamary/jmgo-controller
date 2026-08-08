@@ -12,7 +12,7 @@ index c706dbf..3ba792a 100644
              resValue "string", "app_label_game", "Diana (Game)"
  
 diff --git a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
-index 53cbf68..7366179 100755
+index 53cbf68..e151613 100755
 --- a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 @@ -8,6 +8,9 @@ import android.media.AudioManager;
@@ -29,7 +29,7 @@ index 53cbf68..7366179 100755
      private final boolean enableAudioFx;
  
      private AudioTrack track;
-+    private static final int JMGO_AUDIO_BUFFER_FRAMES = 24;
++    private static final int JMGO_AUDIO_BUFFER_FRAMES = 2;
 +    private static final int JMGO_AUDIO_QUEUE_FRAMES = 32;
 +    private final ArrayBlockingQueue<short[]> freeAudioFrames =
 +            new ArrayBlockingQueue<>(JMGO_AUDIO_QUEUE_FRAMES);
@@ -41,19 +41,18 @@ index 53cbf68..7366179 100755
  
      public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
          this.context = context;
-@@ -147,6 +159,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -147,6 +159,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
                      throw new IllegalStateException();
              }
  
-+            // JMGO's low-latency AudioTrack periodically blocks for roughly 100 ms.
-+            // Keep enough device-side audio queued to absorb that pause while the pooled
-+            // writer keeps Moonlight's receive thread independent from the audio HAL.
++            // The pooled writer isolates Moonlight's receive thread from JMGO's periodic
++            // AudioTrack stalls, so keep the device buffer small for low playback latency.
 +            bufferSize = Math.max(bufferSize, bytesPerFrame * JMGO_AUDIO_BUFFER_FRAMES);
 +
              // Skip low latency options if hardware sample rate doesn't match the content
              if (AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC) != sampleRate && lowLatency) {
                  continue;
-@@ -182,25 +199,70 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -182,25 +198,70 @@ public class AndroidAudioRenderer implements AudioRenderer {
              return -2;
          }
  
@@ -132,7 +131,7 @@ index 53cbf68..7366179 100755
          if (enableAudioFx) {
              // Open an audio effect control session to allow equalizers to apply audio effects
              Intent i = new Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
-@@ -213,6 +275,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -213,6 +274,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
  
      @Override
      public void stop() {
@@ -154,7 +153,7 @@ index 53cbf68..7366179 100755
              // Close our audio effect control session when we're stopping
              Intent i = new Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
 diff --git a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
-index 537b50f..a20b248 100755
+index 537b50f..b324859 100755
 --- a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 @@ -8,6 +8,7 @@ import java.util.Arrays;
@@ -202,7 +201,7 @@ index 537b50f..a20b248 100755
      private long lastNetDataNum;
      private LinkedBlockingQueue<Integer> outputBufferQueue = new LinkedBlockingQueue<>();
      private static final int OUTPUT_BUFFER_QUEUE_LIMIT = 2;
-+    private static final int OUTPUT_BUFFER_QUEUE_START_THRESHOLD = 4;
++    private static final int DECODED_IMAGE_START_THRESHOLD = 1;
 +    private volatile boolean outputPacingStarted;
      private long lastRenderedFrameTimeNanos;
      private HandlerThread choreographerHandlerThread;
@@ -355,7 +354,7 @@ index 537b50f..a20b248 100755
 +            while (!stopping) {
 +                int reserveSize = decodedImageQueue.size();
 +                if (!outputPacingStarted) {
-+                    if (reserveSize < OUTPUT_BUFFER_QUEUE_START_THRESHOLD) {
++                    if (reserveSize < DECODED_IMAGE_START_THRESHOLD) {
 +                        doCodecRecoveryIfRequired(CR_FLAG_CHOREOGRAPHER);
 +                        LockSupport.parkNanos(1_000_000L);
 +                        if (Thread.interrupted()) {
@@ -366,7 +365,7 @@ index 537b50f..a20b248 100755
 +                    outputPacingStarted = true;
 +                    nextReleaseNs = System.nanoTime();
 +                    LimeLog.info("JMGO timer pacing started with " + reserveSize +
-+                            " decoded frames reserved in image ring");
++                            " decoded frame available");
 +                }
 +
 +                long nowNs = System.nanoTime();

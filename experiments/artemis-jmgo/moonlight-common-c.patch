@@ -12,25 +12,24 @@ index b5321c1..011bb21 100644
      nextFrameNumber = 1;
      startFrameNumber = 0;
 diff --git a/src/VideoStream.c b/src/VideoStream.c
-index a2def84..1ee5590 100644
+index a2def84..0b3cb8a 100644
 --- a/src/VideoStream.c
 +++ b/src/VideoStream.c
-@@ -253,6 +253,14 @@ void notifyKeyFrameReceived(void) {
+@@ -253,6 +253,13 @@ void notifyKeyFrameReceived(void) {
  
  // Decoder thread proc
  static void VideoDecoderThreadProc(void* context) {
-+    const uint64_t presentationBufferMs = 150;
-+    const uint64_t decodedOutputLeadMs = 70;
++    const uint64_t presentationLeadMs = 0;
 +    uint64_t baseLocalTimeMs = 0;
 +    uint32_t basePresentationTimeMs = 0;
 +    uint32_t lastPresentationTimeMs = 0;
 +    bool presentationClockStarted = false;
-+    unsigned int underrunCount = 0;
++    unsigned int lateFrameCount = 0;
 +
      while (!PltIsThreadInterrupted(&decoderThread)) {
          VIDEO_FRAME_HANDLE frameHandle;
          PDECODE_UNIT decodeUnit;
-@@ -261,6 +269,48 @@ static void VideoDecoderThreadProc(void* context) {
+@@ -261,6 +268,48 @@ static void VideoDecoderThreadProc(void* context) {
              return;
          }
  
@@ -44,15 +43,15 @@ index a2def84..1ee5590 100644
 +            Limelog("JMGO host presentation discontinuity: %u ms\n", presentationDeltaMs);
 +        }
 +        if (!presentationClockStarted || discontinuity) {
-+            baseLocalTimeMs = nowMs + presentationBufferMs;
++            baseLocalTimeMs = nowMs + presentationLeadMs;
 +            basePresentationTimeMs = presentationTimeMs;
 +            presentationClockStarted = true;
-+            Limelog("JMGO input presentation buffer started with %llu ms lead\n",
-+                    (unsigned long long)presentationBufferMs);
++            Limelog("JMGO input pacing started with %llu ms lead\n",
++                    (unsigned long long)presentationLeadMs);
 +        }
 +
 +        uint64_t targetTimeMs = baseLocalTimeMs +
-+            (uint32_t)(presentationTimeMs - basePresentationTimeMs) - decodedOutputLeadMs;
++            (uint32_t)(presentationTimeMs - basePresentationTimeMs);
 +        if (targetTimeMs > nowMs) {
 +            uint64_t sleepMs = targetTimeMs - nowMs;
 +            PltSleepMsInterruptible(&decoderThread,
@@ -62,10 +61,10 @@ index a2def84..1ee5590 100644
 +                return;
 +            }
 +        }
-+        else if (nowMs - targetTimeMs >= 25) {
-+            underrunCount++;
-+            Limelog("JMGO input presentation buffer underrun %u: %llu ms late\n",
-+                    underrunCount,
++        else if (nowMs - targetTimeMs >= 50) {
++            lateFrameCount++;
++            Limelog("JMGO input pacing late %u: %llu ms\n",
++                    lateFrameCount,
 +                    (unsigned long long)(nowMs - targetTimeMs));
 +        }
 +
