@@ -12,11 +12,13 @@ export {
   resolveMonitor,
   resolveSunshineApp,
   restartSunshine,
+  saveSunshineMinimumFps,
   saveSunshineMonitor,
   sunshineAppsPath,
   sunshineConfigPath,
   type Monitor,
   type SunshineApp,
+  updateSunshineMinimumFpsConfig,
   updateSunshineMonitorConfig,
 } from "./artemis.js";
 export { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";

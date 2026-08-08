@@ -1,0 +1,22 @@
+diff --git a/src/platform/macos/av_video.m b/src/platform/macos/av_video.m
+index 5ad931c5..f3840332 100644
+--- a/src/platform/macos/av_video.m
++++ b/src/platform/macos/av_video.m
+@@ -59,6 +59,8 @@
+ - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
+   @synchronized(self) {
+     AVCaptureVideoDataOutput *videoOutput = [[AVCaptureVideoDataOutput alloc] init];
++    // Preserve the 60 Hz capture cadence through brief encoder backpressure.
++    [videoOutput setAlwaysDiscardsLateVideoFrames:NO];
+ 
+     [videoOutput setVideoSettings:@{
+       (NSString *) kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:self.pixelFormat],
+@@ -67,7 +69,7 @@
+       (NSString *) AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
+     }];
+ 
+-    dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
++    dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, DISPATCH_QUEUE_PRIORITY_HIGH);
+     dispatch_queue_t recordingQueue = dispatch_queue_create("videoCaptureQueue", qos);
+     [videoOutput setSampleBufferDelegate:self queue:recordingQueue];
+ 

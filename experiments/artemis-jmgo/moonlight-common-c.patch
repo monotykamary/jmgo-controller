@@ -1,3 +1,16 @@
+diff --git a/src/AudioStream.c b/src/AudioStream.c
+index d14d572..c9c865b 100644
+--- a/src/AudioStream.c
++++ b/src/AudioStream.c
+@@ -66,7 +66,7 @@ static void AudioPingThreadProc(void* context) {
+ 
+ // Initialize the audio stream and start
+ int initializeAudioStream(void) {
+-    LbqInitializeLinkedBlockingQueue(&packetQueue, 30);
++    LbqInitializeLinkedBlockingQueue(&packetQueue, 60);
+     RtpaInitializeQueue(&rtpAudioQueue);
+     lastSeq = 0;
+     receivedDataFromPeer = false;
 diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
 index b5321c1..011bb21 100644
 --- a/src/VideoDepacketizer.c
@@ -12,14 +25,14 @@ index b5321c1..011bb21 100644
      nextFrameNumber = 1;
      startFrameNumber = 0;
 diff --git a/src/VideoStream.c b/src/VideoStream.c
-index a2def84..0b3cb8a 100644
+index a2def84..5c25dd4 100644
 --- a/src/VideoStream.c
 +++ b/src/VideoStream.c
 @@ -253,6 +253,13 @@ void notifyKeyFrameReceived(void) {
  
  // Decoder thread proc
  static void VideoDecoderThreadProc(void* context) {
-+    const uint64_t presentationLeadMs = 0;
++    const uint64_t presentationLeadMs = 150;
 +    uint64_t baseLocalTimeMs = 0;
 +    uint32_t basePresentationTimeMs = 0;
 +    uint32_t lastPresentationTimeMs = 0;

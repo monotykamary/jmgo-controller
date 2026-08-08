@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+work_dir=${1:-/tmp/sunshine-jmgo-v2026.726.710}
+
+if [[ -e "$work_dir" ]]; then
+  printf 'Refusing to overwrite existing path: %s\n' "$work_dir" >&2
+  exit 1
+fi
+for command in cmake git ninja node pkg-config; do
+  command -v "$command" >/dev/null 2>&1 || { printf '%s is required\n' "$command" >&2; exit 127; }
+done
+
+git clone --quiet --depth 1 --branch v2026.726.710 --recurse-submodules --shallow-submodules \
+  https://github.com/LizardByte/Sunshine.git "$work_dir"
+
+expected=7cb92071ac4394698e92ff6d070d310db9acc32c
+actual=$(git -C "$work_dir" rev-parse HEAD)
+if [[ "$actual" != "$expected" ]]; then
+  printf 'Unexpected Sunshine revision: %s\n' "$actual" >&2
+  exit 1
+fi
+
+git -C "$work_dir" apply --check "$script_dir/sunshine-v2026.726.710.patch"
+git -C "$work_dir" apply "$script_dir/sunshine-v2026.726.710.patch"
+
+cmake -S "$work_dir" -B "$work_dir/cmake-build-jmgo" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF
+cmake --build "$work_dir/cmake-build-jmgo" --parallel
+
+app="$work_dir/cmake-build-jmgo/Sunshine.app"
+web_assets="$work_dir/cmake-build-jmgo/assets/web"
+[[ -x "$app/Contents/MacOS/Sunshine" ]] || { echo "Sunshine.app was not built" >&2; exit 1; }
+[[ -f "$web_assets/index.html" ]] || { echo "Sunshine Web UI was not built" >&2; exit 1; }
+# The upstream macOS POST_BUILD copy can run before the independent web-ui target.
+# Copy once after the complete build so the bundle later installed and signed is self-contained.
+cmake -E copy_directory "$web_assets" "$app/Contents/Resources/assets/web"
+[[ -f "$app/Contents/Resources/assets/web/index.html" ]] || { echo "Sunshine Web UI was not bundled" >&2; exit 1; }
+shasum -a 256 "$app/Contents/MacOS/Sunshine"
+printf '%s\n' "$app"

@@ -117,7 +117,7 @@ jmgo adb uninstall com.example.app
 
 System applications may not be removable by the ordinary ADB shell. The CLI intentionally does not attempt root access or system partition modification.
 
-## JMGO Artemis Lab and monitor selection
+## JMGO Artemis Lab, monitor, and application selection
 
 List the active macOS displays that Sunshine can capture:
 
@@ -142,15 +142,18 @@ jmgo artemis apps --json
 jmgo artemis --app 1
 jmgo artemis --app "Desktop"
 jmgo artemis --monitor primary --app "Steam Big Picture"
+
+# Persist the smooth 1080p60 Sunshine profile and launch directly
+jmgo artemis --minimum-fps 30 --monitor 4 --app "Desktop"
 ```
 
 The app listing reads `apps.json` but emits only indexes and names—never commands, environment variables, or preparation scripts. Direct launch uses Artemis's shortcut activity and the paired Sunshine name. Pass `--pc "NAME"` only when the paired client name differs from `sunshine_name` or the local hostname. A newly added Sunshine entry may require opening that host once in Artemis to refresh its app cache.
 
 Selecting an application asks Sunshine to launch one configured application entry; Sunshine still captures the selected monitor rather than isolating an individual macOS window.
 
-By default the command updates Sunshine's `output_name` when requested, restarts Sunshine, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab or the selected application directly. Restarting first clears orphaned sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor`.
+By default the command updates Sunshine's `output_name` and `minimum_fps_target` only when requested, restarts Sunshine, stops the JMGO Settings process that otherwise performs disruptive Wi-Fi scans, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab or the selected application directly. It automatically prefers `/Applications/Sunshine JMGO.app` when installed; set `JMGO_SUNSHINE_APP` to override it. Restarting first clears orphaned sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor` or `--minimum-fps`.
 
-The tested streaming profile is H.264, Balanced pacing, 60 FPS, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
+The tested streaming profile is H.264, Balanced pacing, 60 FPS, Sunshine `minimum_fps_target = 30`, the [patched macOS capture host](experiments/sunshine-jmgo/README.md), 150 ms of encoded-input lead, a ten-image decoded startup threshold with five copy-ready frames, a 15-image burst queue, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
 
 ## Mac keyboard and trackpad with scrcpy
 
@@ -269,7 +272,7 @@ pnpm pack
 pnpm simulate:pacing
 ```
 
-The headless [decoder-pacing sandbox](experiments/decoder-pacing/README.md) reconstructs measured JMGO frame stalls locally and never contacts the projector. The [JMGO Artemis experiment](experiments/artemis-jmgo/README.md) contains the reproducible client patches that achieved hitch-free 720p60 and 1080p60 with audio on hardware.
+The headless [decoder-pacing sandbox](experiments/decoder-pacing/README.md) reconstructs measured JMGO frame stalls locally and never contacts the projector. The [JMGO Artemis experiment](experiments/artemis-jmgo/README.md) contains the reproducible client patches, and the [Sunshine JMGO experiment](experiments/sunshine-jmgo/README.md) contains the pinned macOS capture patch. Together with projector scan suppression they achieved sustained hitch-free 720p60 and 1080p60 with audio on hardware.
 
 ## License
 

@@ -17,5 +17,10 @@ present2present histogram is as below:
 EOF
 out=$(node "$script_dir/parse-timestats.mjs" "$tmp")
 printf '%s' "$out" | grep -q '"passed":true' || { echo "FAIL: parser did not certify fixture" >&2; exit 1; }
-"$script_dir/jmgo-stream-test" --help | grep -q 'no midpoint probes' || { echo "FAIL: help missing" >&2; exit 1; }
+help=$("$script_dir/jmgo-stream-test" --help)
+printf '%s' "$help" | grep -q 'no midpoint probes' || { echo "FAIL: help missing" >&2; exit 1; }
+printf '%s' "$help" | grep -q -- '--monitor ID' || { echo "FAIL: monitor help missing" >&2; exit 1; }
+if [ "$(uname -s)" = Darwin ] && command -v xcrun >/dev/null 2>&1; then
+  xcrun swift "$script_dir/display-bounds.swift" primary | grep -Eq '^[0-9]+,-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$' || { echo "FAIL: display bounds helper" >&2; exit 1; }
+fi
 echo "PASS: jmgo-stream-test parser and CLI smoke test"

@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { findExecutable, runProcess } from "./process.js";
 
 export const ARTEMIS_PACKAGE = "com.limelight.noirdebug";
+export const JMGO_SETTINGS_PACKAGE = "com.jmgo.setting.x";
 const ARTEMIS_SHORTCUT_COMPONENT = `${ARTEMIS_PACKAGE}/com.limelight.ShortcutTrampoline`;
+const JMGO_SUNSHINE_APP = "/Applications/Sunshine JMGO.app";
 
 export type SunshineApp = {
   index: number;
@@ -236,14 +238,14 @@ export function sunshineConfigPath(): string {
   return join(homedir(), ".config", "sunshine", "sunshine.conf");
 }
 
-export function updateSunshineMonitorConfig(contents: string, monitorId: string): string {
-  if (!/^\d+$/.test(monitorId)) throw new ArtemisError(`invalid monitor ID: ${monitorId}`);
+function updateSunshineConfigValue(contents: string, key: string, value: string): string {
   const lines = contents.replace(/\r\n/g, "\n").split("\n");
+  const pattern = new RegExp(`^\\s*${key}\\s*=`);
   const output: string[] = [];
   let replaced = false;
   for (const line of lines) {
-    if (/^\s*output_name\s*=/.test(line)) {
-      if (!replaced) output.push(`output_name = ${monitorId}`);
+    if (pattern.test(line)) {
+      if (!replaced) output.push(`${key} = ${value}`);
       replaced = true;
     } else if (line.length > 0 || output.length > 0) {
       output.push(line);
@@ -251,10 +253,22 @@ export function updateSunshineMonitorConfig(contents: string, monitorId: string)
   }
   if (!replaced) {
     while (output.at(-1) === "") output.pop();
-    output.push(`output_name = ${monitorId}`);
+    output.push(`${key} = ${value}`);
   }
   while (output.at(-1) === "") output.pop();
   return `${output.join("\n")}\n`;
+}
+
+export function updateSunshineMonitorConfig(contents: string, monitorId: string): string {
+  if (!/^\d+$/.test(monitorId)) throw new ArtemisError(`invalid monitor ID: ${monitorId}`);
+  return updateSunshineConfigValue(contents, "output_name", monitorId);
+}
+
+export function updateSunshineMinimumFpsConfig(contents: string, fps: number): string {
+  if (!Number.isInteger(fps) || fps < 0 || fps > 240) {
+    throw new ArtemisError(`invalid Sunshine minimum FPS: ${fps}`);
+  }
+  return updateSunshineConfigValue(contents, "minimum_fps_target", String(fps));
 }
 
 export async function readSunshineMonitor(path = sunshineConfigPath()): Promise<string | undefined> {
@@ -268,9 +282,9 @@ export async function readSunshineMonitor(path = sunshineConfigPath()): Promise<
   }
 }
 
-export async function saveSunshineMonitor(
-  monitorId: string,
-  path = sunshineConfigPath(),
+async function saveSunshineConfig(
+  update: (contents: string) => string,
+  path: string,
 ): Promise<void> {
   let contents = "";
   try {
@@ -282,7 +296,7 @@ export async function saveSunshineMonitor(
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, updateSunshineMonitorConfig(contents, monitorId), {
+    await writeFile(temporary, update(contents), {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
@@ -295,19 +309,49 @@ export async function saveSunshineMonitor(
   }
 }
 
+export async function saveSunshineMonitor(
+  monitorId: string,
+  path = sunshineConfigPath(),
+): Promise<void> {
+  await saveSunshineConfig((contents) => updateSunshineMonitorConfig(contents, monitorId), path);
+}
+
+export async function saveSunshineMinimumFps(
+  fps: number,
+  path = sunshineConfigPath(),
+): Promise<void> {
+  await saveSunshineConfig((contents) => updateSunshineMinimumFpsConfig(contents, fps), path);
+}
+
 async function sunshineRunning(pgrep: string): Promise<boolean> {
   const result = await runProcess(pgrep, ["-x", "Sunshine"], { allowFailure: true });
   return result.code === 0;
+}
+
+async function sunshineApplicationTarget(): Promise<string> {
+  const configured = process.env.JMGO_SUNSHINE_APP?.trim();
+  if (configured) return configured;
+  try {
+    await access(JMGO_SUNSHINE_APP);
+    return JMGO_SUNSHINE_APP;
+  } catch {
+    return "Sunshine";
+  }
+}
+
+export function sunshineOpenArgs(application: string): string[] {
+  return application.includes("/") ? ["-n", application] : ["-a", application];
 }
 
 export async function restartSunshine(timeoutMs = 8_000): Promise<void> {
   if (process.platform !== "darwin") {
     throw new ArtemisError("automatic Sunshine restart currently requires macOS; use --no-restart");
   }
-  const [open, pgrep, pkill] = await Promise.all([
+  const [open, pgrep, pkill, application] = await Promise.all([
     findExecutable("open"),
     findExecutable("pgrep"),
     findExecutable("pkill"),
+    sunshineApplicationTarget(),
   ]);
   if (!open || !pgrep || !pkill) {
     throw new ArtemisError("open, pgrep, and pkill are required to restart Sunshine");
@@ -318,7 +362,7 @@ export async function restartSunshine(timeoutMs = 8_000): Promise<void> {
   while ((await sunshineRunning(pgrep)) && Date.now() < deadline) await delay(100);
   if (await sunshineRunning(pgrep)) throw new ArtemisError("Sunshine did not stop in time");
 
-  await runProcess(open, ["-a", "Sunshine"]);
+  await runProcess(open, sunshineOpenArgs(application));
   deadline = Date.now() + timeoutMs;
   while (!(await sunshineRunning(pgrep)) && Date.now() < deadline) await delay(100);
   if (!(await sunshineRunning(pgrep))) throw new ArtemisError("Sunshine did not start in time");

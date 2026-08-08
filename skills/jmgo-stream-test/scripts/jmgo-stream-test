@@ -18,6 +18,7 @@ Options:
   --duration SECONDS   Timed run, default 60 (5-600)
   --package NAME       Android package, default com.limelight.noirdebug
   --asset PATH         Motion HTML, default high-detail-motion.html
+  --monitor ID         Host display for motion; default Sunshine output_name
   --no-audio           Do not generate/play the stereo test tone
   --screenshot PATH    Capture a normalized PNG after timing (intrusive)
   -h, --help           Show help
@@ -31,6 +32,7 @@ serial=""
 duration=60
 package="com.limelight.noirdebug"
 asset="$skill_dir/assets/high-detail-motion.html"
+monitor=""
 audio=1
 screenshot=""
 while [ "$#" -gt 0 ]; do
@@ -40,6 +42,7 @@ while [ "$#" -gt 0 ]; do
     --duration) duration="${2:?--duration requires a value}"; shift 2 ;;
     --package) package="${2:?--package requires a value}"; shift 2 ;;
     --asset) asset="${2:?--asset requires a value}"; shift 2 ;;
+    --monitor) monitor="${2:?--monitor requires a value}"; shift 2 ;;
     --no-audio) audio=0; shift ;;
     --screenshot) screenshot="${2:?--screenshot requires a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -53,8 +56,8 @@ if ! printf '%s' "$package" | grep -Eq '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+
 [ -f "$asset" ] || { echo "asset not found: $asset" >&2; exit 2; }
 command -v adb >/dev/null 2>&1 || { echo "adb is required" >&2; exit 127; }
 command -v node >/dev/null 2>&1 || { echo "node is required" >&2; exit 127; }
-command -v open >/dev/null 2>&1 || { echo "macOS open is required" >&2; exit 127; }
 command -v osascript >/dev/null 2>&1 || { echo "osascript is required" >&2; exit 127; }
+command -v xcrun >/dev/null 2>&1 || { echo "Xcode Command Line Tools are required" >&2; exit 127; }
 if [ "$audio" -eq 1 ]; then
   command -v ffmpeg >/dev/null 2>&1 || { echo "ffmpeg is required unless --no-audio is used" >&2; exit 127; }
   command -v afplay >/dev/null 2>&1 || { echo "afplay is required unless --no-audio is used" >&2; exit 127; }
@@ -69,16 +72,39 @@ fi
 
 adb connect "$serial" >/dev/null
 adb -s "$serial" shell pm path "$package" | grep -q '^package:' || { echo "$package is not installed" >&2; exit 1; }
+if adb -s "$serial" shell pm path com.jmgo.setting.x | grep -q '^package:' &&
+   [ -n "$(adb -s "$serial" shell pidof com.jmgo.setting.x)" ]; then
+  adb -s "$serial" shell am force-stop com.jmgo.setting.x
+fi
 activity="$(adb -s "$serial" shell dumpsys activity activities | grep -m1 mResumedActivity || true)"
 printf '%s' "$activity" | grep -q "$package/com.limelight.Game" || { echo "Artemis Desktop stream is not active; run jmgo-artemis, then select Desktop" >&2; exit 1; }
+
+if [ -z "$monitor" ]; then
+  sunshine_config="${SUNSHINE_CONFIG_FILE:-$HOME/.config/sunshine/sunshine.conf}"
+  if [ -f "$sunshine_config" ]; then
+    monitor="$(sed -nE 's/^[[:space:]]*output_name[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' "$sunshine_config" | tail -1)"
+  fi
+fi
+if [ -z "$monitor" ]; then monitor="primary"; fi
+display_info="$(xcrun swift "$script_dir/display-bounds.swift" "$monitor")"
+IFS=, read -r display_id display_x display_y display_width display_height <<< "$display_info"
+display_right=$((display_x + display_width))
+display_bottom=$((display_y + display_height))
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/jmgo-stream-test.XXXXXX")"
 tone_pid=""
 opened=0
+opened_window_id=""
 cleanup() {
   adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1 || true
   if [ -n "$tone_pid" ]; then kill "$tone_pid" 2>/dev/null || true; wait "$tone_pid" 2>/dev/null || true; fi
-  if [ "$opened" -eq 1 ]; then osascript -e 'tell application "Safari" to close front window' >/dev/null 2>&1 || true; fi
+  if [ "$opened" -eq 1 ] && [ -n "$opened_window_id" ]; then
+    osascript \
+      -e 'on run argv' \
+      -e 'set windowID to item 1 of argv as integer' \
+      -e 'tell application "Safari" to close (first window whose id is windowID)' \
+      -e 'end run' "$opened_window_id" >/dev/null 2>&1 || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT INT TERM
@@ -91,8 +117,54 @@ if [ "$audio" -eq 1 ]; then
     -map '[a]' -c:a pcm_s16le "$work/tone.wav"
 fi
 
-open -a Safari "$asset"
+asset_url="$(node -e 'const {pathToFileURL}=require("url"); console.log(pathToFileURL(process.argv[1]).href)' "$asset")"
+opened_window_id="$(osascript \
+  -e 'on run argv' \
+  -e 'tell application "Safari"' \
+  -e 'make new document with properties {URL:item 1 of argv}' \
+  -e 'activate' \
+  -e 'return id of front window' \
+  -e 'end tell' \
+  -e 'end run' "$asset_url")"
+case "$opened_window_id" in *[!0-9]*|'') echo "unable to create dedicated Safari window" >&2; exit 1 ;; esac
 opened=1
+placed=0
+for _ in 1 2 3 4 5; do
+  if actual_bounds="$(osascript \
+    -e 'on run argv' \
+    -e 'set windowID to item 1 of argv as integer' \
+    -e 'set leftEdge to item 2 of argv as integer' \
+    -e 'set topEdge to item 3 of argv as integer' \
+    -e 'set rightEdge to item 4 of argv as integer' \
+    -e 'set bottomEdge to item 5 of argv as integer' \
+    -e 'tell application "Safari"' \
+    -e 'set bounds of (first window whose id is windowID) to {leftEdge, topEdge, rightEdge, bottomEdge}' \
+    -e 'activate' \
+    -e 'return bounds of (first window whose id is windowID)' \
+    -e 'end tell' \
+    -e 'end run' "$opened_window_id" "$display_x" "$display_y" "$display_right" "$display_bottom" 2>/dev/null)"; then
+    placed=1
+    break
+  fi
+  sleep 1
+done
+if [ "$placed" -ne 1 ]; then echo "unable to place Safari on display $display_id" >&2; exit 1; fi
+actual_url="$(osascript \
+  -e 'on run argv' \
+  -e 'set windowID to item 1 of argv as integer' \
+  -e 'tell application "Safari" to return URL of current tab of (first window whose id is windowID)' \
+  -e 'end run' "$opened_window_id")"
+if [ "$actual_url" != "$asset_url" ]; then echo "dedicated Safari window did not load motion asset: $actual_url" >&2; exit 1; fi
+actual_bounds="$(printf '%s' "$actual_bounds" | tr -d ' ')"
+IFS=, read -r actual_left actual_top actual_right actual_bottom <<< "$actual_bounds"
+actual_center_x=$(((actual_left + actual_right) / 2))
+actual_center_y=$(((actual_top + actual_bottom) / 2))
+if [ "$actual_center_x" -lt "$display_x" ] || [ "$actual_center_x" -ge "$display_right" ] ||
+   [ "$actual_center_y" -lt "$display_y" ] || [ "$actual_center_y" -ge "$display_bottom" ]; then
+  echo "Safari remained outside display $display_id: $actual_bounds" >&2
+  exit 1
+fi
+echo "Motion source on display $display_id: ${display_width}x${display_height} at ${display_x},${display_y}; Safari $actual_bounds" >&2
 if [ "$audio" -eq 1 ]; then afplay "$work/tone.wav" >/dev/null 2>&1 & tone_pid=$!; fi
 sleep 3
 adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1
@@ -111,9 +183,13 @@ metrics_rc=$?
 set -e
 printf '%s\n' "$metrics"
 
-fault_pattern='queue overflow|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer rejected|image reader stalled|FATAL EXCEPTION|input pacing late'
+fault_pattern='queue overflow|decoded image queue dropped|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer slow|prepared image queue slow|prepared image queue empty|prepared image handoff late|image writer rejected|image reader stalled|WifiTracker.*fetchScanResults|FATAL EXCEPTION|input pacing late'
 faults=$(grep -Eic "$fault_pattern" "$work/logcat.txt" || true)
 printf '{"faultEvents":%s,"audioEnabled":%s,"durationSeconds":%s}\n' "$faults" "$([ "$audio" -eq 1 ] && echo true || echo false)" "$duration"
+if [ "$faults" -ne 0 ]; then
+  echo "Matched diagnostic events:" >&2
+  grep -Ei "$fault_pattern" "$work/logcat.txt" | sed -E 's/^[A-Z]\/[^:]+: //' | sort | uniq -c >&2 || true
+fi
 
 if [ -n "$screenshot" ]; then
   mkdir -p "$(dirname "$screenshot")"

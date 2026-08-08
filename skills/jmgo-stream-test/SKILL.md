@@ -16,11 +16,12 @@ compatibility: >-
 
 # JMGO stream certification
 
-Run only after `jmgo-artemis` has opened the certified client and Desktop is actively streaming.
+Run only after `jmgo-artemis --minimum-fps 30 --app Desktop` has opened the certified client and Desktop is actively streaming.
 
 ```bash
 jmgo-stream-test --host PROJECTOR_HOST
 jmgo-stream-test --host PROJECTOR_HOST --duration 60
+jmgo-stream-test --host PROJECTOR_HOST --monitor 4 --duration 300
 jmgo-stream-test --serial PROJECTOR_HOST:5555 --no-audio
 jmgo-stream-test --host PROJECTOR_HOST --screenshot /tmp/jmgo-result.png
 ```
@@ -31,9 +32,10 @@ Defaults:
 - high-detail 60 FPS motion asset
 - quiet 48 kHz stereo PCM tone
 - package `com.limelight.noirdebug`
+- motion source placed on Sunshine’s configured `output_name` display (override with `--monitor ID`)
 - strict acceptance: every interval 15–18 ms, no interval ≥34 ms, no compositor drops, and no known pipeline fault
 
-The script performs **no ADB work during the timed sleep**. Do not add `top`, screenshots, log polling, or progress probes in the measurement window; ADB over the same projector Wi-Fi path can itself cause a multi-second stream outage.
+Before timing, the script resolves the selected CoreGraphics display, creates a dedicated Safari window, verifies its motion-asset URL, and moves that exact window wholly onto the display. Cleanup closes only the tracked test window. This is mandatory when Sunshine captures a virtual display; motion or tab changes on the Mac’s main display do not exercise the streamed pixels. It then force-stops `com.jmgo.setting.x`, whose background Wi-Fi scan caused a measured 450 ms outage. It then performs **no ADB work during the timed sleep**. Do not reopen projector Settings or add `top`, screenshots, log polling, or progress probes in the measurement window; either can perturb the same projector Wi-Fi path.
 
 ## Assets
 
@@ -49,9 +51,11 @@ A passing build must show zero:
 - encoded queue overflows
 - ≥50 ms input-pacing lateness
 - MediaCodec input stalls
+- decoded image queue replacements
 - decoded image-ring empties or timer delays
 - ImageReader/ImageWriter faults
 - audio queue drops, write failures, or legacy backlogs
+- projector `WifiTracker` scans during the timed window
 - SurfaceFlinger dropped, late-acquire, or bad-desired-present frames
 
 Read [references/e2e-certification.md](references/e2e-certification.md) for the protocol and [references/hitch-investigation.md](references/hitch-investigation.md) before changing encoder, network, decoder, pacing, or audio behavior. Historical sanitized measurements are in [references/measurements.json](references/measurements.json).

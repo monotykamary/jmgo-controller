@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Adb } from "./adb.js";
 import {
   ARTEMIS_PACKAGE,
+  JMGO_SETTINGS_PACKAGE,
   buildArtemisAppLaunchCommand,
   listMonitors,
   listSunshineApps,
@@ -12,6 +13,7 @@ import {
   resolveMonitor,
   resolveSunshineApp,
   restartSunshine,
+  saveSunshineMinimumFps,
   saveSunshineMonitor,
 } from "./artemis.js";
 import { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";
@@ -32,7 +34,7 @@ Usage:
   jmgo remote [--host IP] watch [--include-identifiers]
   jmgo adb [--host IP] <info|current|audio|packages|install|uninstall|launch|screenshot>
   jmgo scrcpy [--host IP] [--mirror] [-- SCRCPY_ARGS...]
-  jmgo artemis [open] [--host IP] [--monitor ID|NAME|primary] [--app INDEX|NAME] [--pc NAME] [--no-restart]
+  jmgo artemis [open] [--host IP] [--monitor ID|NAME|primary] [--minimum-fps FPS] [--app INDEX|NAME] [--pc NAME] [--no-restart]
   jmgo artemis <apps|monitors> [--json]
   jmgo play <link|search|info>
   jmgo play [--host IP] install PACKAGE [--arch tv] [--languages LIST]
@@ -128,12 +130,21 @@ async function scrcpyCommand(args: string[]): Promise<void> {
 
 async function waitForArtemisStream(adb: Adb, appName: string, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let lastProbeError: unknown;
   while (Date.now() < deadline) {
-    if ((await adb.currentApp()).includes(`${ARTEMIS_PACKAGE}/com.limelight.Game`)) return;
+    try {
+      if ((await adb.currentApp()).includes(`${ARTEMIS_PACKAGE}/com.limelight.Game`)) return;
+      lastProbeError = undefined;
+    } catch (error) {
+      // Immediately after an APK replacement there may briefly be no resumed activity,
+      // causing the remote grep to exit 1. Keep polling within the launch deadline.
+      lastProbeError = error;
+    }
     await delay(250);
   }
   throw new Error(
     `Artemis did not start ${JSON.stringify(appName)} in time; open the host once to refresh its app list or retry without --no-restart`,
+    { cause: lastProbeError },
   );
 }
 
@@ -167,13 +178,18 @@ async function artemisCommand(args: string[]): Promise<void> {
   if (action !== "open") throw new Error("artemis command must be open, apps, or monitors");
 
   const monitorSelector = takeOption(args, "--monitor");
+  const minimumFpsOption = takeOption(args, "--minimum-fps");
   const appSelector = takeOption(args, "--app");
   const computerSelector = takeOption(args, "--pc");
   const noRestart = takeFlag(args, "--no-restart");
   const host = await hostFrom(args);
   if (args.length > 0) throw new Error(`unknown artemis option: ${args[0]}`);
-  if (monitorSelector && noRestart) {
-    throw new Error("--monitor requires Sunshine restart; remove --no-restart");
+  if ((monitorSelector || minimumFpsOption) && noRestart) {
+    throw new Error("--monitor and --minimum-fps require Sunshine restart; remove --no-restart");
+  }
+  const minimumFps = minimumFpsOption === undefined ? undefined : Number(minimumFpsOption);
+  if (minimumFps !== undefined && (!Number.isInteger(minimumFps) || minimumFps < 0 || minimumFps > 240)) {
+    throw new Error("--minimum-fps must be an integer from 0 through 240");
   }
   if (computerSelector && !appSelector) throw new Error("--pc requires --app");
 
@@ -186,6 +202,7 @@ async function artemisCommand(args: string[]): Promise<void> {
     await saveSunshineMonitor(monitor.id);
     selectedMonitor = `${monitor.name} (${monitor.id})`;
   }
+  if (minimumFps !== undefined) await saveSunshineMinimumFps(minimumFps);
   if (!noRestart) await restartSunshine();
 
   const adb = await Adb.create(host);
@@ -193,6 +210,9 @@ async function artemisCommand(args: string[]): Promise<void> {
     throw new Error(
       `JMGO Artemis Lab is not installed (${ARTEMIS_PACKAGE}); build and install experiments/artemis-jmgo first`,
     );
+  }
+  if (await adb.isPackageInstalled(JMGO_SETTINGS_PACKAGE)) {
+    await adb.forceStop(JMGO_SETTINGS_PACKAGE);
   }
   await adb.forceStop(ARTEMIS_PACKAGE);
   if (selectedApp) {
@@ -211,6 +231,7 @@ async function artemisCommand(args: string[]): Promise<void> {
     await adb.launch(ARTEMIS_PACKAGE);
     console.log(`opened JMGO Artemis Lab${selectedMonitor ? ` on ${selectedMonitor}` : ""}`);
   }
+  if (minimumFps !== undefined) console.log(`Sunshine minimum FPS target set to ${minimumFps}`);
   if (!noRestart) console.log("Sunshine restarted first to clear orphaned sessions");
 }
 

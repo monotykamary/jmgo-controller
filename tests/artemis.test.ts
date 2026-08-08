@@ -12,7 +12,10 @@ import {
   readSunshineMonitor,
   resolveMonitor,
   resolveSunshineApp,
+  saveSunshineMinimumFps,
   saveSunshineMonitor,
+  sunshineOpenArgs,
+  updateSunshineMinimumFpsConfig,
   updateSunshineMonitorConfig,
 } from "../src/artemis.js";
 
@@ -70,6 +73,19 @@ test("Sunshine monitor update replaces duplicates and preserves other options", 
   assert.throws(() => updateSunshineMonitorConfig("", "DP-1"), /invalid monitor ID/);
 });
 
+test("Sunshine minimum FPS update replaces duplicates and validates bounds", () => {
+  assert.equal(
+    updateSunshineMinimumFpsConfig(
+      "minimum_fps_target = 60\nhevc_mode = 1\nminimum_fps_target = 45\n",
+      30,
+    ),
+    "minimum_fps_target = 30\nhevc_mode = 1\n",
+  );
+  assert.equal(updateSunshineMinimumFpsConfig("", 0), "minimum_fps_target = 0\n");
+  assert.throws(() => updateSunshineMinimumFpsConfig("", -1), /invalid Sunshine minimum FPS/);
+  assert.throws(() => updateSunshineMinimumFpsConfig("", 241), /invalid Sunshine minimum FPS/);
+});
+
 test("Sunshine app parsing exposes only ordered names", async () => {
   const document = JSON.stringify({
     env: { SECRET: "not returned" },
@@ -93,6 +109,14 @@ test("Sunshine app parsing exposes only ordered names", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Sunshine launch arguments distinguish app paths from registered names", () => {
+  assert.deepEqual(sunshineOpenArgs("/Applications/Sunshine JMGO.app"), [
+    "-n",
+    "/Applications/Sunshine JMGO.app",
+  ]);
+  assert.deepEqual(sunshineOpenArgs("Sunshine"), ["-a", "Sunshine"]);
 });
 
 test("Sunshine app selection accepts exact names and one-based indexes", () => {
@@ -136,8 +160,9 @@ test("Sunshine monitor save is atomic and private", async () => {
   try {
     await writeFile(join(directory, "seed"), "unused");
     await saveSunshineMonitor("7", path);
+    await saveSunshineMinimumFps(30, path);
     assert.equal(await readSunshineMonitor(path), "7");
-    assert.equal(await readFile(path, "utf8"), "output_name = 7\n");
+    assert.equal(await readFile(path, "utf8"), "output_name = 7\nminimum_fps_target = 30\n");
     if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
   } finally {
     await rm(directory, { recursive: true, force: true });
