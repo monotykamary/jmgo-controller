@@ -1,6 +1,6 @@
 # JMGO Artemis 60 FPS client experiment
 
-This experiment patches Artemis `v20.2.6` (`4de0227fb6ae5c9ad9f7cc486aed7c3571f5f62f`) for the JMGO S901's proprietary `OMX.MS.AVC.Decoder`. It preserves 720p60 H.264 quality and audio while absorbing the periodic host-delivery and decoder-output bursts that produced visible 90–114 ms freezes.
+This experiment patches Artemis `v20.2.6` (`4de0227fb6ae5c9ad9f7cc486aed7c3571f5f62f`) for the JMGO S901's proprietary `OMX.MS.AVC.Decoder`. It preserves 720p60 or 1080p60 H.264 quality and audio while absorbing the periodic host-delivery and decoder-output bursts that produced visible 90–114 ms freezes.
 
 The debug build installs alongside Artemis as `com.limelight.noirdebug` with the label **JMGO Artemis Lab**.
 
@@ -12,7 +12,7 @@ The solution uses buffering at each blocking boundary rather than changing H.264
 - MediaCodec is fed 70 ms ahead and its bursty network enqueue timestamps are replaced with the smoothed presentation clock.
 - `OMX.MS.AVC.Decoder` outputs into a 12-slot `YUV_420_888` ImageReader.
 - A monotonic urgent-display thread starts with four decoded frames and presents one every 16.67 ms through ImageWriter.
-- Each writer image inherits the decoded 1280×720 crop rectangle. SurfaceFlinger then scales that region across the 1920×1080 video layer instead of displaying it in the upper-left with an uninitialized border.
+- Each writer image inherits the decoder's crop rectangle. SurfaceFlinger scales 1280×720 content across the 1920×1080 video layer and presents 1920×1080 content directly, avoiding an uninitialized border in either mode.
 - Plane copies use three direct-buffer JNI calls per frame; native stride-aware `memcpy` is required because Java row copies only reached 45–49 FPS.
 - AudioTrack receives a 120 ms device buffer. A preallocated 32-frame PCM pool moves blocking writes to an audio-priority worker, preserving samples without blocking Moonlight's receive callback.
 
@@ -45,7 +45,7 @@ adb -s PROJECTOR_IP:5555 install -r \
 
 Pair the new client with Sunshine, then select:
 
-- Resolution: 1280×720
+- Resolution: 1280×720 or 1920×1080 (both hardware-certified)
 - Frame rate: 60 FPS
 - Frame pacing: Balanced
 - Codec: H.264
@@ -59,6 +59,8 @@ minimum_fps_target = 60
 ```
 
 ## Hardware certification
+
+### 720p60
 
 A 60-second controlled-motion run on 2026-08-08 used Sunshine's `h264_videotoolbox` encoder at 7,308,000 bit/s with a continuous 48 kHz audio tone.
 
@@ -74,6 +76,20 @@ A 60-second controlled-motion run on 2026-08-08 used Sunshine's `h264_videotoolb
 - audio queue drops, AudioTrack failures, and legacy pending-audio backlogs: 0
 
 A fresh 30-second run after removing diagnostic probes reproduced 100% 15–18 ms intervals with a 17 ms maximum and zero faults. After adding crop propagation for full-screen output, a final clean-clone 15-second hardware run presented 915/915 frames at 15–18 ms, with a 17 ms maximum and zero compositor, pipeline, or audio faults.
+
+### 1080p60
+
+A nonintrusive 60-second controlled-motion run used the same H.264 pipeline at 14,988,000 bit/s with continuous 48 kHz stereo PCM audio.
+
+- 3,611 presented frames
+- 100% of present-to-present intervals: 15–18 ms
+- longest nonzero interval: 17 ms
+- gaps of 34 ms or longer: 0
+- SurfaceFlinger dropped, late-acquire, and bad-desired-present frames: 0
+- network drops and decoder-input stalls: 0
+- encoded queue overflows and underruns: 0
+- decoded image-ring empties and timer delays: 0
+- audio queue drops, AudioTrack failures, and legacy pending-audio backlogs: 0
 
 ## Patch layout
 
