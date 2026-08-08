@@ -60,6 +60,22 @@ export class Adb {
     return this.run(["shell", command]);
   }
 
+  // Send a keyboard, mouse, or touch event through the on-device "input" tool.
+  // Args follow "input <source> <command> <arg>...", e.g. ["keyevent", "KEYCODE_DPAD_OK"],
+  // ["mouse", "tap", "500", "500"], ["keyboard", "text", "hello"].
+  async input(args: readonly string[]): Promise<string> {
+    if (args.length === 0) throw new AdbError("input requires an event (e.g. keyevent KEYCODE_DPAD_OK)");
+    for (const arg of args) {
+      // Reject shell metacharacters: the event string is interpolated into an
+      // `adb shell` command, so a space, quote, or $ would break out of it.
+      if (!/^[A-Za-z0-9_,.+%@:=|-]+$/.test(arg)) {
+        throw new AdbError(`unsafe input argument: ${arg}`);
+      }
+    }
+    await this.connect();
+    return this.run(["shell", `input ${args.join(" ")}`]);
+  }
+
   async info(): Promise<Record<string, string>> {
     const properties = [
       ["model", "ro.product.model"],

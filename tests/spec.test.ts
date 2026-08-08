@@ -11,7 +11,7 @@ const allNodes = (node: CommandSpec): CommandSpec[] => [
 test("primary commands match the dispatch in cli.ts", () => {
   assert.deepEqual(
     commandSpec.subcommands.map((child) => child.name),
-    ["discover", "host", "remote", "adb", "scrcpy", "artemis", "play", "doctor", "completions"],
+    ["discover", "host", "remote", "adb", "artemis", "play", "doctor", "completions"],
   );
 });
 
@@ -49,7 +49,7 @@ test("resolveCommandPath descends past options with values", () => {
 
 test("resolveCommandPath stops at the first positional and ignores flags after --", () => {
   assert.deepEqual(resolveCommandPath(["remote", "key", "ok"]).path, ["remote", "key"]);
-  assert.deepEqual(resolveCommandPath(["scrcpy", "--", "--tcpip=9006"]).path, ["scrcpy"]);
+  assert.deepEqual(resolveCommandPath(["adb", "input", "keyevent", "KEYCODE_DPAD_OK"]).path, ["adb", "input"]);
 });
 
 test("resolveCommandPath does not confuse a value-taking option with a subcommand", () => {

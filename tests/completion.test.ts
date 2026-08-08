@@ -6,7 +6,7 @@ import { keyCodes } from "../src/remote.js";
 test("completes root commands", () => {
   const context = resolveCompletionContext(["jmgo", ""]);
   assert.equal(context.command.name, "");
-  assert.deepEqual(resolveCandidates(context), ["discover", "host", "remote", "adb", "scrcpy", "artemis", "play", "doctor", "completions"]);
+  assert.deepEqual(resolveCandidates(context), ["discover", "host", "remote", "adb", "artemis", "play", "doctor", "completions"]);
 });
 
 test("descends into subcommands and resets positionals", () => {
@@ -69,9 +69,9 @@ test("completes shell names for completions <SHELL>", () => {
   assert.equal(formatCandidates(resolveCandidates(context), "z"), "zsh\n");
 });
 
-test("passthrough commands complete nothing", () => {
-  const context = resolveCompletionContext(["jmgo", "scrcpy", "--", "--tcpip=9006", ""]);
-  assert.equal(context.command.name, "scrcpy");
+test("variadic adb input event args complete nothing", () => {
+  const context = resolveCompletionContext(["jmgo", "adb", "input", "keyevent", ""]);
+  assert.equal(context.command.name, "input");
   assert.deepEqual(resolveCandidates(context), []);
 });
 
@@ -88,6 +88,6 @@ test("variadic positionals keep serving their values", () => {
 
 test("runCompletion prints sorted candidates and never throws", () => {
   assert.equal(runCompletion(["jmgo", "completions", ""]), "bash\nfish\nzsh\n");
-  assert.equal(runCompletion([]), "adb\nartemis\ncompletions\ndiscover\ndoctor\nhost\nplay\nremote\nscrcpy\n");
+  assert.equal(runCompletion([]), "adb\nartemis\ncompletions\ndiscover\ndoctor\nhost\nplay\nremote\n");
   assert.equal(runCompletion(["jmgo", "remote", "key", "po"]), "power\npower-menu\n");
 });

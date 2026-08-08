@@ -10,7 +10,7 @@ Ordinary shell ADB can:
 - list, install, replace, launch, force-stop, and uninstall user packages
 - install split APK sets in one `install-multiple` transaction
 - capture the screen
-- provide UHID keyboard/mouse control through scrcpy
+- send keyboard, mouse, and touch input events via `adb shell input` (`jmgo adb input`)
 
 The projector shell can prefix `exec-out screencap` with text. Locate the PNG signature before writing the image; the CLI does this.
 
@@ -28,6 +28,6 @@ com.limelight.noirdebug
 
 Do not infer package identity from a launcher label. Never commit APKs, app data, screenshots, package databases, or device identifiers.
 
-## scrcpy
+## Input control
 
-The default CLI uses `--no-video --no-audio --mouse=uhid --keyboard=uhid`, turning a Mac keyboard and trackpad into control devices without a redundant mirror. `--mirror` is opt-in.
+Keyboard, mouse, and touch events go through the on-device `input` tool (`jmgo adb input`). Mouse and touch are issued as absolute commands (`tap`, `swipe`, `motionevent`) rather than a live relative cursor; D-pad and text entry are the most reliable paths on Android TV.

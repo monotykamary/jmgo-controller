@@ -3,13 +3,13 @@ name: jmgo-control
 description: >-
   Operate a JMGO projector from the terminal through the jmgo-controller CLI:
   discover and save its host, inspect/redact state, send remote keys and volume,
-  manage Android packages through ADB, capture screenshots, and use scrcpy HID
-  control. Use for local projector automation or diagnostics. Requires jmgo on
-  PATH, with ADB enabled for Android operations.
+  manage Android packages through ADB, capture screenshots, and send keyboard,
+  mouse, and touch input events. Use for local projector automation or
+  diagnostics. Requires jmgo on PATH, with ADB enabled for Android operations.
 setup: bash scripts/setup
 compatibility: >-
   Node.js 20+, jmgo-controller on PATH, and a JMGO projector on the same LAN.
-  ADB commands require Android Platform Tools and TCP 5555; scrcpy is optional.
+  ADB commands require Android Platform Tools and TCP 5555.
 ---
 
 # JMGO control
@@ -59,13 +59,17 @@ Bonfire OS can prefix binary shell output. The screenshot command strips that pr
 
 ## Keyboard and pointer
 
+Send input events over ADB with `jmgo-control adb input`, which wraps the on-device `input` tool:
+
 ```bash
-jmgo-control scrcpy
-jmgo-control scrcpy --mirror
-jmgo-control scrcpy --mirror -- --max-fps=30 --stay-awake
+jmgo-control adb input keyevent KEYCODE_DPAD_OK
+jmgo-control adb input keyevent 4
+jmgo-control adb input keyboard text hello
+jmgo-control adb input mouse tap 500 500
+jmgo-control adb input touchscreen swipe 100 800 100 100 300
 ```
 
-The default is control-only UHID input with no mirrored video or audio.
+Sources include `dpad`, `keyboard`, `mouse`, `touchpad`, `gamepad`, `touchscreen`, `stylus`, and `trackball`. For D-pad and volume keys the native `jmgo-control remote key` path (TCP 9005) needs no ADB connection.
 
 ## Certified streaming client
 

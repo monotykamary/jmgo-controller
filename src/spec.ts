@@ -40,7 +40,7 @@ export interface CommandSpec {
   options: readonly OptionSpec[];
   positionals: readonly PositionalSpec[];
   subcommands: readonly CommandSpec[];
-  // Everything after the command is handed to another program (scrcpy).
+  // Everything after the command is handed to another program.
   passthrough?: boolean;
   footer?: string;
 }
@@ -100,7 +100,7 @@ export const commandSpec: CommandSpec = {
   name: "",
   summary: "Local-first control for JMGO projectors",
   description:
-    "Native LAN remote control, ADB automation, scrcpy mirroring, certified Artemis streaming, and verified Google Play installs for JMGO projectors running Bonfire OS.",
+    "Native LAN remote control, ADB automation and input control, certified Artemis streaming, and verified Google Play installs for JMGO projectors running Bonfire OS.",
   options: [
     { long: "--help", short: "-h", description: "show help for jmgo or a command" },
     { long: "--version", description: "print the version" },
@@ -232,16 +232,16 @@ export const commandSpec: CommandSpec = {
           positionals: [{ name: "PATH", source: "files" }],
           subcommands: [],
         },
+        {
+          name: "input",
+          summary: "send a keyboard, mouse, or touch event via adb shell input",
+          description:
+            "Events follow the on-device input tool: <source> <command> <arg>.... Examples: input keyevent KEYCODE_DPAD_OK, input keyevent 4, input mouse tap 500 500, input keyboard text hello, input touchscreen swipe 100 800 100 100 300, input motionevent DOWN 500 500.",
+          options: [hostOption],
+          positionals: [{ name: "EVENT", variadic: true }],
+          subcommands: [],
+        },
       ],
-    },
-    {
-      name: "scrcpy",
-      summary: "drive the projector with a Mac keyboard and trackpad via scrcpy",
-      description: "Control-only by default; anything after -- is passed straight to scrcpy.",
-      options: [hostOption, { long: "--mirror", description: "mirror the display as well" }],
-      positionals: [{ name: "SCRCPY_ARGS", optional: true, variadic: true, source: "files" }],
-      passthrough: true,
-      subcommands: [],
     },
     {
       name: "artemis",
@@ -312,7 +312,7 @@ export const commandSpec: CommandSpec = {
     {
       name: "doctor",
       summary: "report host resolution and required executables",
-      description: "Exits non-zero when the host is unresolved or adb, scrcpy, apksigner, or gplaydl is missing.",
+      description: "Exits non-zero when the host is unresolved or adb, apksigner, or gplaydl is missing.",
       options: [hostOption],
       positionals: [],
       subcommands: [],

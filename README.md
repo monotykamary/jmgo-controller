@@ -15,7 +15,7 @@ The protocol was validated on a JMGO S901 running Bonfire OS. Other models may u
 - List, install, uninstall, and launch Android applications through ADB.
 - Capture valid screenshots even when Bonfire OS prefixes binary shell output.
 - Open the certified JMGO Artemis Lab client, clear stale Sunshine sessions, and select the streamed macOS monitor and Sunshine application.
-- Use a Mac keyboard and trackpad as control-only Android HID devices through `scrcpy`.
+- Send keyboard, mouse, and touch input events to the projector over ADB (`jmgo adb input`).
 - Download Play APK splits with `gplaydl`, verify every split has the same signing certificate, and install them in one ADB session.
 - Redact serial numbers and Bluetooth addresses and strip unsafe Unicode formatting by default.
 - Import the protocol, remote, ADB, discovery, and Play APIs from TypeScript or JavaScript.
@@ -32,7 +32,7 @@ Some Bonfire OS builds expose unauthenticated ADB over the local network. Anyone
 - pnpm 10 for development
 - A JMGO projector reachable on the same LAN
 - Android Platform Tools for ADB commands
-- Optional keyboard, trackpad, and screen control: `scrcpy`
+- Keyboard, mouse, and touch input control is built in (via ADB)
 - Artemis host integration: macOS with Sunshine
 - Stream certification: Safari, `ffmpeg`, and `afplay`
 - Optional Play support:
@@ -43,7 +43,6 @@ On macOS:
 
 ```bash
 brew install --cask android-platform-tools
-brew install scrcpy
 pipx install gplaydl
 ```
 
@@ -171,27 +170,20 @@ By default the command updates Sunshine's `output_name` and `minimum_fps_target`
 
 The tested streaming profile is H.264, Balanced pacing, 60 FPS, Sunshine `minimum_fps_target = 30`, the [patched macOS capture host](experiments/sunshine-jmgo/README.md), 150 ms of encoded-input lead, a ten-image decoded startup threshold with five copy-ready frames, a 15-image burst queue, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
 
-## Mac keyboard and trackpad with scrcpy
+## Keyboard, mouse, and touch input over ADB
 
-Use the saved projector host and forward the Mac keyboard and trackpad as Android UHID devices without mirroring video or audio:
-
-```bash
-jmgo scrcpy
-```
-
-Keep a mirrored control window instead:
+Send input events straight to the projector with `jmgo adb input`, which wraps the on-device `input` tool. Events follow `input <source> <command> <arg>...`:
 
 ```bash
-jmgo scrcpy --mirror
+jmgo adb input keyevent KEYCODE_DPAD_DOWN   # navigate
+jmgo adb input keyevent KEYCODE_DPAD_OK     # select (or: jmgo adb input keyevent 23)
+jmgo adb input keyboard text hello          # type into a focused field
+jmgo adb input mouse tap 500 500            # click at coordinates
+jmgo adb input touchscreen swipe 100 800 100 100 300   # swipe up
+jmgo adb input motionevent DOWN 500 500     # raw motion events
 ```
 
-Additional scrcpy options can be passed after `--`:
-
-```bash
-jmgo scrcpy --mirror -- --max-fps=30 --stay-awake
-```
-
-The command connects ADB first and then runs `scrcpy` interactively. Exit scrcpy to return to the shell. Keyboard and pointer behavior can vary by Android TV application.
+Sources include `dpad`, `keyboard`, `mouse`, `touchpad`, `gamepad`, `touchscreen`, `stylus`, and `trackball`. For infrared-style D-pad and volume keys, the native `jmgo remote key` path (TCP 9005) needs no ADB connection. Input behavior can vary by Android TV application.
 
 ## Verified Play delivery
 
@@ -263,7 +255,7 @@ npx skills add https://github.com/monotykamary/jmgo-controller
 
 | Skill | Use it for |
 |---|---|
-| [`jmgo-control`](skills/jmgo-control/SKILL.md) | Discovery, native remote keys and volume, ADB app lifecycle, screenshots, and scrcpy control |
+| [`jmgo-control`](skills/jmgo-control/SKILL.md) | Discovery, native remote keys and volume, ADB app lifecycle, screenshots, and input control |
 | [`jmgo-artemis`](skills/jmgo-artemis/SKILL.md) | Building/installing the certified client, opening it without stale-session popups, and choosing the Sunshine monitor or application |
 | [`jmgo-stream-test`](skills/jmgo-stream-test/SKILL.md) | Saved HTML motion artifacts, hitch investigation, strict SurfaceFlinger/logcat E2E certification, and latency regressions |
 

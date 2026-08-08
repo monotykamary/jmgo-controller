@@ -8,7 +8,7 @@ import { programName } from "./spec.js";
 
 // bash: `complete -o default -F` registers the handler; an empty COMPREPLY
 // falls back to readline filename completion for path-valued positionals
-// (adb install, screenshot, scrcpy args). Classic compgen+$() form, not
+// (adb install, screenshot). Classic compgen+$() form, not
 // mapfile, for macOS bash 3.2. Serves the eval script and the drop-file.
 export const buildBashCompletionScript = (): string =>
   [
@@ -64,7 +64,7 @@ export const buildZshCompletionFile = (): string =>
   ].join("\n");
 
 // fish: the function prints CLI candidates, or __fish_complete_path output
-// when the CLI had nothing (APK paths, screenshot output, scrcpy args).
+// when the CLI had nothing (APK paths, screenshot output).
 // `complete -f` makes this function the sole source of candidates.
 export const buildFishCompletionScript = (): string =>
   [

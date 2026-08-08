@@ -7,7 +7,7 @@ test("root help lists every command with usage", () => {
   const text = renderHelp();
   assert.match(text, /^jmgo — /u);
   assert.match(text, /Usage:\n {2}jmgo <command>/u);
-  for (const command of ["discover", "host", "remote", "adb", "scrcpy", "artemis", "play", "doctor", "completions"]) {
+  for (const command of ["discover", "host", "remote", "adb", "artemis", "play", "doctor", "completions"]) {
     assert.match(text, new RegExp(`^ {2}${command} `, "mu"), `root help mentions ${command}`);
   }
   assert.match(text, /--help/u);

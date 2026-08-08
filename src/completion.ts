@@ -30,7 +30,7 @@ const findOption = (node: CommandSpec, flag: string): OptionSpec | null => {
 // name, the last element is the partial current word (possibly ""), and in
 // between are the previously typed tokens. Options that take a value skip
 // their following token; subcommands descend and reset the positional count;
-// a passthrough command (scrcpy) stops the walk entirely — its arguments are
+// a passthrough command stops the walk entirely — its arguments are
 // another program's, so completion defers to filenames.
 export const resolveCompletionContext = (words: readonly string[]): CompletionContext => {
   const previousTokens = words.slice(1, -1);
