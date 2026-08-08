@@ -14,6 +14,14 @@ coverage/
 *.aab
 *.obb
 *.dm
+*.png
+*.jpg
+*.jpeg
+*.jks
+*.keystore
+*.p12
+sunshine.conf
+sunshine_state.json
 secrets.*
 .env
 .env.*

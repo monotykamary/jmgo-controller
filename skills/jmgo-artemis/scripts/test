@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -uo pipefail
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "$(uname -s)" != Darwin ] || ! command -v system_profiler >/dev/null 2>&1; then echo "skip: macOS system_profiler required" >&2; exit 77; fi
+out=$("$script_dir/jmgo-artemis" monitors --json 2>&1); rc=$?
+if [ "$rc" -ne 0 ]; then echo "$out" >&2; exit 1; fi
+printf '%s' "$out" | grep -q '"id"' || { echo "FAIL: no monitor ID" >&2; exit 1; }
+printf '%s' "$out" | grep -q '"selected"' || { echo "FAIL: no selected monitor" >&2; exit 1; }
+echo "PASS: jmgo-artemis monitor discovery"

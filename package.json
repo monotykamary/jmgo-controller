@@ -1,10 +1,13 @@
 {
   "name": "jmgo-controller",
-  "version": "0.4.0",
-  "description": "Local-network remote control, ADB automation, and verified Play APK delivery for JMGO projectors",
+  "version": "0.5.0",
+  "description": "Local-network control, ADB automation, verified Play delivery, and certified Artemis streaming for JMGO projectors",
   "type": "module",
   "bin": {
-    "jmgo": "./dist/cli.js"
+    "jmgo": "./dist/cli.js",
+    "jmgo-artemis": "./skills/jmgo-artemis/scripts/jmgo-artemis",
+    "jmgo-control": "./skills/jmgo-control/scripts/jmgo-control",
+    "jmgo-stream-test": "./skills/jmgo-stream-test/scripts/jmgo-stream-test"
   },
   "exports": {
     ".": {
@@ -14,6 +17,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "README.md",
     "SECURITY.md",
     "LICENSE"
@@ -21,22 +25,32 @@
   "scripts": {
     "clean": "node scripts/clean.mjs dist",
     "build": "pnpm clean && tsc",
-    "check": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "check": "pnpm check:sensitive && tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "check:sensitive": "node scripts/check-sensitive.mjs",
     "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js experiments/decoder-pacing/*.test.mjs",
     "simulate:pacing": "node experiments/decoder-pacing/simulate.mjs",
     "prepack": "pnpm build"
+  },
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
   },
   "engines": {
     "node": ">=20"
   },
   "packageManager": "pnpm@10.34.5",
   "keywords": [
+    "pi-package",
     "jmgo",
     "projector",
     "android-tv",
     "adb",
     "remote-control",
-    "home-automation"
+    "home-automation",
+    "moonlight",
+    "sunshine",
+    "agent-skills"
   ],
   "license": "MIT",
   "author": "JMGO Controller contributors",

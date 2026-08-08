@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+  source_dir="$(cd "$(dirname "$source_path")" && pwd)"
+  target="$(readlink "$source_path")"
+  case "$target" in /*) source_path="$target" ;; *) source_path="$source_dir/$target" ;; esac
+done
+script_dir="$(cd "$(dirname "$source_path")" && pwd)"
+skill_dir="$(dirname "$script_dir")"
+
+usage() {
+  cat <<'EOF'
+Usage: jmgo-stream-test [--host HOST | --serial HOST:PORT] [options]
+
+Options:
+  --duration SECONDS   Timed run, default 60 (5-600)
+  --package NAME       Android package, default com.limelight.noirdebug
+  --asset PATH         Motion HTML, default high-detail-motion.html
+  --no-audio           Do not generate/play the stereo test tone
+  --screenshot PATH    Capture a normalized PNG after timing (intrusive)
+  -h, --help           Show help
+
+The timed interval performs no midpoint probes.
+EOF
+}
+
+host=""
+serial=""
+duration=60
+package="com.limelight.noirdebug"
+asset="$skill_dir/assets/high-detail-motion.html"
+audio=1
+screenshot=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --host) host="${2:?--host requires a value}"; shift 2 ;;
+    --serial) serial="${2:?--serial requires a value}"; shift 2 ;;
+    --duration) duration="${2:?--duration requires a value}"; shift 2 ;;
+    --package) package="${2:?--package requires a value}"; shift 2 ;;
+    --asset) asset="${2:?--asset requires a value}"; shift 2 ;;
+    --no-audio) audio=0; shift ;;
+    --screenshot) screenshot="${2:?--screenshot requires a value}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+case "$duration" in *[!0-9]*|'') echo "--duration must be an integer" >&2; exit 2 ;; esac
+if [ "$duration" -lt 5 ] || [ "$duration" -gt 600 ]; then echo "--duration must be 5-600" >&2; exit 2; fi
+if ! printf '%s' "$package" | grep -Eq '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$'; then echo "invalid package" >&2; exit 2; fi
+[ -f "$asset" ] || { echo "asset not found: $asset" >&2; exit 2; }
+command -v adb >/dev/null 2>&1 || { echo "adb is required" >&2; exit 127; }
+command -v node >/dev/null 2>&1 || { echo "node is required" >&2; exit 127; }
+command -v open >/dev/null 2>&1 || { echo "macOS open is required" >&2; exit 127; }
+command -v osascript >/dev/null 2>&1 || { echo "osascript is required" >&2; exit 127; }
+if [ "$audio" -eq 1 ]; then
+  command -v ffmpeg >/dev/null 2>&1 || { echo "ffmpeg is required unless --no-audio is used" >&2; exit 127; }
+  command -v afplay >/dev/null 2>&1 || { echo "afplay is required unless --no-audio is used" >&2; exit 127; }
+fi
+
+if [ -z "$serial" ]; then
+  if [ -z "$host" ]; then host="${JMGO_HOST:-}"; fi
+  if [ -z "$host" ] && command -v jmgo >/dev/null 2>&1; then host="$(jmgo host show 2>/dev/null || true)"; fi
+  if [ -z "$host" ] || [ "$host" = "not set" ]; then echo "projector host required via --host, --serial, JMGO_HOST, or jmgo host set" >&2; exit 2; fi
+  case "$host" in *:*) serial="$host" ;; *) serial="$host:5555" ;; esac
+fi
+
+adb connect "$serial" >/dev/null
+adb -s "$serial" shell pm path "$package" | grep -q '^package:' || { echo "$package is not installed" >&2; exit 1; }
+activity="$(adb -s "$serial" shell dumpsys activity activities | grep -m1 mResumedActivity || true)"
+printf '%s' "$activity" | grep -q "$package/com.limelight.Game" || { echo "Artemis Desktop stream is not active; run jmgo-artemis, then select Desktop" >&2; exit 1; }
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/jmgo-stream-test.XXXXXX")"
+tone_pid=""
+opened=0
+cleanup() {
+  adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1 || true
+  if [ -n "$tone_pid" ]; then kill "$tone_pid" 2>/dev/null || true; wait "$tone_pid" 2>/dev/null || true; fi
+  if [ "$opened" -eq 1 ]; then osascript -e 'tell application "Safari" to close front window' >/dev/null 2>&1 || true; fi
+  rm -rf "$work"
+}
+trap cleanup EXIT INT TERM
+
+if [ "$audio" -eq 1 ]; then
+  ffmpeg -hide_banner -loglevel error \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=$((duration + 8))" \
+    -f lavfi -i "sine=frequency=880:sample_rate=48000:duration=$((duration + 8))" \
+    -filter_complex '[0:a]volume=0.04[l];[1:a]volume=0.04[r];[l][r]amerge=inputs=2[a]' \
+    -map '[a]' -c:a pcm_s16le "$work/tone.wav"
+fi
+
+open -a Safari "$asset"
+opened=1
+if [ "$audio" -eq 1 ]; then afplay "$work/tone.wav" >/dev/null 2>&1 & tone_pid=$!; fi
+sleep 3
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -enable >/dev/null 2>&1
+adb -s "$serial" logcat -c
+
+echo "Measuring $duration seconds with no midpoint probes..." >&2
+sleep "$duration"
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -dump > "$work/timestats.txt"
+adb -s "$serial" logcat -d -v brief > "$work/logcat.txt" 2>/dev/null
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1
+
+set +e
+metrics="$(node "$script_dir/parse-timestats.mjs" "$work/timestats.txt" "$package")"
+metrics_rc=$?
+set -e
+printf '%s\n' "$metrics"
+
+fault_pattern='queue overflow|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer rejected|image reader stalled|FATAL EXCEPTION|input pacing late'
+faults=$(grep -Eic "$fault_pattern" "$work/logcat.txt" || true)
+printf '{"faultEvents":%s,"audioEnabled":%s,"durationSeconds":%s}\n' "$faults" "$([ "$audio" -eq 1 ] && echo true || echo false)" "$duration"
+
+if [ -n "$screenshot" ]; then
+  mkdir -p "$(dirname "$screenshot")"
+  adb -s "$serial" exec-out screencap -p > "$work/screenshot.raw"
+  node -e 'const fs=require("fs");const b=fs.readFileSync(process.argv[1]);const s=Buffer.from([0x89,0x50,0x4e,0x47,13,10,26,10]);const i=b.indexOf(s);if(i<0)throw Error("PNG signature missing");fs.writeFileSync(process.argv[2],b.subarray(i));' "$work/screenshot.raw" "$screenshot"
+  echo "screenshot: $screenshot" >&2
+fi
+
+if [ "$metrics_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi

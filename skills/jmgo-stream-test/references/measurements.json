@@ -1,0 +1,57 @@
+{
+  "hardware": "JMGO S901",
+  "clientPackage": "com.limelight.noirdebug",
+  "codec": "H.264 OMX.MS.AVC.Decoder",
+  "displayHz": 60,
+  "results": [
+    {
+      "stage": "baseline-direct-surface",
+      "resolution": "1280x720",
+      "averagePresentedFpsRange": [55, 57],
+      "periodicGapMsRange": [90, 114],
+      "networkDrops": 0,
+      "decoderInputStalls": 0,
+      "outcome": "failed-periodic-hitch"
+    },
+    {
+      "stage": "certified-image-ring",
+      "resolution": "1280x720",
+      "durationSeconds": 60,
+      "presentedFrames": 3621,
+      "normalIntervalRangeMs": [15, 18],
+      "normalPercent": 100,
+      "maximumIntervalMs": 17,
+      "faultEvents": 0
+    },
+    {
+      "stage": "certified-image-ring",
+      "resolution": "1920x1080",
+      "bitrateBitsPerSecond": 14988000,
+      "durationSeconds": 60,
+      "presentedFrames": 3611,
+      "normalIntervalRangeMs": [15, 18],
+      "normalPercent": 100,
+      "maximumIntervalMs": 17,
+      "faultEvents": 0
+    },
+    {
+      "stage": "certified-zero-lead-low-latency",
+      "resolution": "1920x1080",
+      "bitrateBitsPerSecond": 14988000,
+      "durationSeconds": 60,
+      "presentedIntervals": 3617,
+      "normalIntervalRangeMs": [15, 18],
+      "normalPercent": 100,
+      "maximumIntervalMs": 17,
+      "configuredVideoReserveMsRemoved": 130,
+      "audioTrackCapacityMs": 10,
+      "faultEvents": 0
+    }
+  ],
+  "invalidMeasurement": {
+    "cause": "midpoint adb top probe",
+    "maximumIntervalMs": 1000,
+    "imageRingEmptyEvents": 148,
+    "classification": "instrumentation-induced; excluded"
+  }
+}

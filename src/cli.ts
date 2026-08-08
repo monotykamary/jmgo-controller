@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { Adb } from "./adb.js";
+import {
+  ARTEMIS_PACKAGE,
+  listMonitors,
+  readSunshineMonitor,
+  resolveMonitor,
+  restartSunshine,
+  saveSunshineMonitor,
+} from "./artemis.js";
 import { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";
 import { discover } from "./discovery.js";
 import { installFromPlay } from "./play.js";
@@ -19,6 +27,8 @@ Usage:
   jmgo remote [--host IP] watch [--include-identifiers]
   jmgo adb [--host IP] <info|current|audio|packages|install|uninstall|launch|screenshot>
   jmgo scrcpy [--host IP] [--mirror] [-- SCRCPY_ARGS...]
+  jmgo artemis [open] [--host IP] [--monitor ID|NAME|primary] [--no-restart]
+  jmgo artemis monitors [--json]
   jmgo play <link|search|info>
   jmgo play [--host IP] install PACKAGE [--arch tv] [--languages LIST]
   jmgo doctor [--host IP]
@@ -111,6 +121,55 @@ async function scrcpyCommand(args: string[]): Promise<void> {
   await runScrcpy(host, { mirror, extraArgs: args });
 }
 
+async function artemisCommand(args: string[]): Promise<void> {
+  const action = args[0] && !args[0].startsWith("--") ? args.shift() : "open";
+  if (action === "monitors") {
+    const json = takeFlag(args, "--json");
+    if (args.length > 0) throw new Error(`unknown artemis monitors option: ${args[0]}`);
+    const [monitors, configured] = await Promise.all([listMonitors(), readSunshineMonitor()]);
+    const output = monitors.map((monitor) => ({
+      ...monitor,
+      selected: configured ? monitor.id === configured : monitor.primary,
+    }));
+    if (json) console.log(JSON.stringify(output, null, 2));
+    else {
+      for (const monitor of output) {
+        const resolution = monitor.resolution ? ` · ${monitor.resolution}` : "";
+        console.log(`${monitor.selected ? "*" : " "} ${monitor.id} · ${monitor.name}${resolution}`);
+      }
+    }
+    return;
+  }
+  if (action !== "open") throw new Error("artemis command must be open or monitors");
+
+  const monitorSelector = takeOption(args, "--monitor");
+  const noRestart = takeFlag(args, "--no-restart");
+  const host = await hostFrom(args);
+  if (args.length > 0) throw new Error(`unknown artemis option: ${args[0]}`);
+  if (monitorSelector && noRestart) {
+    throw new Error("--monitor requires Sunshine restart; remove --no-restart");
+  }
+
+  let selectedMonitor: string | undefined;
+  if (monitorSelector) {
+    const monitor = resolveMonitor(await listMonitors(), monitorSelector);
+    await saveSunshineMonitor(monitor.id);
+    selectedMonitor = `${monitor.name} (${monitor.id})`;
+  }
+  if (!noRestart) await restartSunshine();
+
+  const adb = await Adb.create(host);
+  if (!(await adb.isPackageInstalled(ARTEMIS_PACKAGE))) {
+    throw new Error(
+      `JMGO Artemis Lab is not installed (${ARTEMIS_PACKAGE}); build and install experiments/artemis-jmgo first`,
+    );
+  }
+  await adb.forceStop(ARTEMIS_PACKAGE);
+  await adb.launch(ARTEMIS_PACKAGE);
+  console.log(`opened JMGO Artemis Lab${selectedMonitor ? ` on ${selectedMonitor}` : ""}`);
+  if (!noRestart) console.log("Sunshine restarted first to clear orphaned Desktop sessions");
+}
+
 async function playCommand(args: string[]): Promise<void> {
   const command = args.shift();
   const gplaydl = await findExecutable("gplaydl");
@@ -183,6 +242,7 @@ async function main(): Promise<void> {
   } else if (command === "remote") await remoteCommand(args);
   else if (command === "adb") await adbCommand(args);
   else if (command === "scrcpy") await scrcpyCommand(args);
+  else if (command === "artemis") await artemisCommand(args);
   else if (command === "play") await playCommand(args);
   else if (command === "doctor") {
     const report = {

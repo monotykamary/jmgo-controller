@@ -1,0 +1,210 @@
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { findExecutable, runProcess } from "./process.js";
+
+export const ARTEMIS_PACKAGE = "com.limelight.noirdebug";
+
+export type Monitor = {
+  id: string;
+  name: string;
+  primary: boolean;
+  resolution?: string;
+};
+
+type SystemProfilerDisplay = {
+  _name?: unknown;
+  _spdisplays_displayID?: unknown;
+  _spdisplays_pixels?: unknown;
+  _spdisplays_resolution?: unknown;
+  spdisplays_main?: unknown;
+  spdisplays_online?: unknown;
+};
+
+type SystemProfilerGpu = {
+  spdisplays_ndrvs?: unknown;
+};
+
+type SystemProfilerOutput = {
+  SPDisplaysDataType?: unknown;
+};
+
+export class ArtemisError extends Error {}
+
+export function parseSystemProfilerDisplays(output: string): Monitor[] {
+  let parsed: SystemProfilerOutput;
+  try {
+    parsed = JSON.parse(output) as SystemProfilerOutput;
+  } catch (error) {
+    throw new ArtemisError("system_profiler returned invalid JSON", { cause: error });
+  }
+
+  if (!Array.isArray(parsed.SPDisplaysDataType)) {
+    throw new ArtemisError("system_profiler did not return display data");
+  }
+
+  const monitors: Monitor[] = [];
+  for (const gpuValue of parsed.SPDisplaysDataType) {
+    const gpu = gpuValue as SystemProfilerGpu;
+    if (!Array.isArray(gpu.spdisplays_ndrvs)) continue;
+    for (const displayValue of gpu.spdisplays_ndrvs) {
+      const display = displayValue as SystemProfilerDisplay;
+      if (display.spdisplays_online !== undefined && display.spdisplays_online !== "spdisplays_yes") {
+        continue;
+      }
+      if (
+        typeof display._spdisplays_displayID !== "string" ||
+        !/^\d+$/.test(display._spdisplays_displayID)
+      ) {
+        continue;
+      }
+      const name =
+        typeof display._name === "string" && display._name.length > 0
+          ? display._name
+          : `Display ${display._spdisplays_displayID}`;
+      const resolution =
+        typeof display._spdisplays_pixels === "string"
+          ? display._spdisplays_pixels
+          : typeof display._spdisplays_resolution === "string"
+            ? display._spdisplays_resolution
+            : undefined;
+      monitors.push({
+        id: display._spdisplays_displayID,
+        name,
+        primary: display.spdisplays_main === "spdisplays_yes",
+        ...(resolution ? { resolution } : {}),
+      });
+    }
+  }
+
+  if (monitors.length === 0) throw new ArtemisError("no active macOS monitors found");
+  return monitors;
+}
+
+export async function listMonitors(): Promise<Monitor[]> {
+  if (process.platform !== "darwin") {
+    throw new ArtemisError("monitor discovery currently requires macOS");
+  }
+  const executable = await findExecutable("system_profiler");
+  if (!executable) throw new ArtemisError("system_profiler was not found");
+  const result = await runProcess(executable, ["SPDisplaysDataType", "-json"]);
+  return parseSystemProfilerDisplays(result.stdout.toString());
+}
+
+export function resolveMonitor(monitors: readonly Monitor[], selector: string): Monitor {
+  if (selector.toLowerCase() === "primary") {
+    const primary = monitors.find((monitor) => monitor.primary);
+    if (!primary) throw new ArtemisError("no primary monitor was reported");
+    return primary;
+  }
+
+  const byId = monitors.find((monitor) => monitor.id === selector);
+  if (byId) return byId;
+
+  const byName = monitors.filter(
+    (monitor) => monitor.name.toLowerCase() === selector.toLowerCase(),
+  );
+  if (byName.length === 1) return byName[0] as Monitor;
+  if (byName.length > 1) {
+    throw new ArtemisError(`monitor name is ambiguous: ${selector}; use its numeric ID`);
+  }
+  throw new ArtemisError(
+    `unknown monitor: ${selector}; available IDs: ${monitors.map((monitor) => monitor.id).join(", ")}`,
+  );
+}
+
+export function sunshineConfigPath(): string {
+  if (process.env.SUNSHINE_CONFIG_FILE) return process.env.SUNSHINE_CONFIG_FILE;
+  return join(homedir(), ".config", "sunshine", "sunshine.conf");
+}
+
+export function updateSunshineMonitorConfig(contents: string, monitorId: string): string {
+  if (!/^\d+$/.test(monitorId)) throw new ArtemisError(`invalid monitor ID: ${monitorId}`);
+  const lines = contents.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let replaced = false;
+  for (const line of lines) {
+    if (/^\s*output_name\s*=/.test(line)) {
+      if (!replaced) output.push(`output_name = ${monitorId}`);
+      replaced = true;
+    } else if (line.length > 0 || output.length > 0) {
+      output.push(line);
+    }
+  }
+  if (!replaced) {
+    while (output.at(-1) === "") output.pop();
+    output.push(`output_name = ${monitorId}`);
+  }
+  while (output.at(-1) === "") output.pop();
+  return `${output.join("\n")}\n`;
+}
+
+export async function readSunshineMonitor(path = sunshineConfigPath()): Promise<string | undefined> {
+  try {
+    const contents = await readFile(path, "utf8");
+    const matches = [...contents.matchAll(/^\s*output_name\s*=\s*(\S+)\s*$/gm)];
+    return matches.at(-1)?.[1];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export async function saveSunshineMonitor(
+  monitorId: string,
+  path = sunshineConfigPath(),
+): Promise<void> {
+  let contents = "";
+  try {
+    contents = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, updateSunshineMonitorConfig(contents, monitorId), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    await rename(temporary, path);
+    await chmod(path, 0o600);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function sunshineRunning(pgrep: string): Promise<boolean> {
+  const result = await runProcess(pgrep, ["-x", "Sunshine"], { allowFailure: true });
+  return result.code === 0;
+}
+
+export async function restartSunshine(timeoutMs = 8_000): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new ArtemisError("automatic Sunshine restart currently requires macOS; use --no-restart");
+  }
+  const [open, pgrep, pkill] = await Promise.all([
+    findExecutable("open"),
+    findExecutable("pgrep"),
+    findExecutable("pkill"),
+  ]);
+  if (!open || !pgrep || !pkill) {
+    throw new ArtemisError("open, pgrep, and pkill are required to restart Sunshine");
+  }
+
+  await runProcess(pkill, ["-TERM", "-x", "Sunshine"], { allowFailure: true });
+  let deadline = Date.now() + timeoutMs;
+  while ((await sunshineRunning(pgrep)) && Date.now() < deadline) await delay(100);
+  if (await sunshineRunning(pgrep)) throw new ArtemisError("Sunshine did not stop in time");
+
+  await runProcess(open, ["-a", "Sunshine"]);
+  deadline = Date.now() + timeoutMs;
+  while (!(await sunshineRunning(pgrep)) && Date.now() < deadline) await delay(100);
+  if (!(await sunshineRunning(pgrep))) throw new ArtemisError("Sunshine did not start in time");
+  await delay(3_000);
+}

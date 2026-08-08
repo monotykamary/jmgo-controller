@@ -5,6 +5,14 @@ import { findExecutable, runProcess } from "./process.js";
 export class AdbError extends Error {}
 
 const packagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+export function extractPng(output: Uint8Array): Buffer {
+  const buffer = Buffer.from(output);
+  const offset = buffer.indexOf(pngSignature);
+  if (offset < 0) throw new AdbError("screencap did not return a PNG image");
+  return buffer.subarray(offset);
+}
 
 function assertPackageName(packageName: string): void {
   if (!packagePattern.test(packageName)) throw new AdbError(`invalid package: ${packageName}`);
@@ -99,6 +107,18 @@ export class Adb {
     return this.run(["uninstall", ...(keepData ? ["-k"] : []), packageName]);
   }
 
+  async isPackageInstalled(packageName: string): Promise<boolean> {
+    assertPackageName(packageName);
+    return (await this.shell(`pm path ${packageName}`)).split("\n").some((line) =>
+      line.startsWith("package:"),
+    );
+  }
+
+  forceStop(packageName: string): Promise<string> {
+    assertPackageName(packageName);
+    return this.shell(`am force-stop ${packageName}`);
+  }
+
   launch(packageName: string): Promise<string> {
     assertPackageName(packageName);
     return this.shell(`monkey -p ${packageName} -c android.intent.category.LAUNCHER 1`);
@@ -115,7 +135,7 @@ export class Adb {
       "screencap",
       "-p",
     ]);
-    await writeFile(output, result.stdout);
+    await writeFile(output, extractPng(result.stdout));
     return output;
   }
 }

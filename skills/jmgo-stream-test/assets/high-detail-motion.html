@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>JMGO 1080p60 Motion Certification</title>
+<style>html,body,canvas{margin:0;width:100%;height:100%;overflow:hidden;background:#05070b}canvas{display:block}</style>
+<canvas id="c"></canvas>
+<script>
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d',{alpha:false});
+let frame=0;
+function resize(){const d=devicePixelRatio||1;canvas.width=Math.round(innerWidth*d);canvas.height=Math.round(innerHeight*d)}
+addEventListener('resize',resize);resize();
+function draw(now){
+  const w=canvas.width,h=canvas.height,t=now/1000;
+  ctx.fillStyle='#07111d';ctx.fillRect(0,0,w,h);
+  const cell=Math.max(24,Math.floor(w/48));
+  const shift=Math.floor(t*240)%(cell*2);
+  for(let y=0;y<h;y+=cell)for(let x=-cell*2;x<w+cell*2;x+=cell){
+    ctx.fillStyle=(((x/cell|0)+(y/cell|0))&1)?'#123b58':'#081b2c';
+    ctx.fillRect(x+((y/cell&1)?shift:-shift),y,cell,cell);
+  }
+  const barX=Math.floor((t*720)%(w+160))-80;
+  ctx.fillStyle='#fff';ctx.fillRect(barX,0,10,h);
+  ctx.fillStyle='#00e5ff';ctx.fillRect((w-barX+80)%w,0,8,h);
+  for(let i=0;i<8;i++){
+    const x=(t*(150+i*23)+i*w/8)%(w+240)-120;
+    ctx.fillStyle=`hsl(${(i*45+frame)%360} 90% 55%)`;
+    ctx.fillRect(x,h*(i+1)/10,180,Math.max(18,h/45));
+  }
+  ctx.fillStyle='rgba(0,0,0,.78)';ctx.fillRect(20,20,700,115);
+  ctx.fillStyle='#fff';ctx.font=`${Math.max(28,h/38)}px monospace`;
+  ctx.fillText('JMGO 1080p60 MOTION + AUDIO',40,65);
+  ctx.fillText(`frame ${frame}  ${now.toFixed(1)} ms`,40,115);
+  frame++;requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script>

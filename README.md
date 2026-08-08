@@ -13,7 +13,8 @@ The protocol was validated on a JMGO S901 running Bonfire OS. Other models may u
 - Read projector state, including current volume and firmware information.
 - Send navigation, volume, home, settings, and power events over TCP port 9005.
 - List, install, uninstall, and launch Android applications through ADB.
-- Capture screenshots and inspect the foreground Android activity and audio state.
+- Capture valid screenshots even when Bonfire OS prefixes binary shell output.
+- Open the certified JMGO Artemis Lab client, clear stale Sunshine sessions, and select the streamed macOS monitor.
 - Use a Mac keyboard and trackpad as control-only Android HID devices through `scrcpy`.
 - Download Play APK splits with `gplaydl`, verify every split has the same signing certificate, and install them in one ADB session.
 - Redact serial numbers and Bluetooth addresses and strip unsafe Unicode formatting by default.
@@ -32,6 +33,8 @@ Some Bonfire OS builds expose unauthenticated ADB over the local network. Anyone
 - A JMGO projector reachable on the same LAN
 - Android Platform Tools for ADB commands
 - Optional keyboard, trackpad, and screen control: `scrcpy`
+- Artemis host integration: macOS with Sunshine
+- Stream certification: Safari, `ffmpeg`, and `afplay`
 - Optional Play support:
   - `gplaydl` 4.x
   - Android SDK Build Tools providing `apksigner`
@@ -114,6 +117,27 @@ jmgo adb uninstall com.example.app
 
 System applications may not be removable by the ordinary ADB shell. The CLI intentionally does not attempt root access or system partition modification.
 
+## JMGO Artemis Lab and monitor selection
+
+List the active macOS displays that Sunshine can capture:
+
+```bash
+jmgo artemis monitors
+jmgo artemis monitors --json
+```
+
+Open the certified package on the primary or an explicit display:
+
+```bash
+jmgo artemis --monitor primary
+jmgo artemis --monitor 7
+jmgo artemis --monitor "Studio Display"
+```
+
+By default the command updates Sunshine's `output_name` when requested, restarts Sunshine, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab. Restarting first clears orphaned Desktop sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor`.
+
+The tested streaming profile is H.264, Balanced pacing, 60 FPS, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
+
 ## Mac keyboard and trackpad with scrcpy
 
 Use the saved projector host and forward the Mac keyboard and trackpad as Android UHID devices without mirroring video or audio:
@@ -195,6 +219,31 @@ Never commit:
 - `.env`, `config.json`, or authentication caches
 
 The project delegates authentication to `gplaydl link`. Environment variables are inherited by child tools but are never logged by this CLI. See [SECURITY.md](SECURITY.md).
+
+## Agent skills
+
+The repository ships browser-harness-style Agent Skills and declares them as Pi package resources. Install from GitHub with the standard skills CLI:
+
+```bash
+npx skills add https://github.com/monotykamary/jmgo-controller
+```
+
+| Skill | Use it for |
+|---|---|
+| [`jmgo-control`](skills/jmgo-control/SKILL.md) | Discovery, native remote keys and volume, ADB app lifecycle, screenshots, and scrcpy control |
+| [`jmgo-artemis`](skills/jmgo-artemis/SKILL.md) | Building/installing the certified client, opening it without stale-session popups, and choosing the Sunshine monitor |
+| [`jmgo-stream-test`](skills/jmgo-stream-test/SKILL.md) | Saved HTML motion artifacts, hitch investigation, strict SurfaceFlinger/logcat E2E certification, and latency regressions |
+
+Each skill follows the `SKILL.md` + `scripts/setup` + `scripts/test` layout. Supporting files include:
+
+- `skills/jmgo-control/references/` — native protocol, Bonfire ADB/root safety, and verified Play delivery
+- `skills/jmgo-artemis/references/` — certified architecture plus immutable build/deploy procedure
+- `skills/jmgo-stream-test/assets/simple-motion.html` — the exact early hitch-reproduction bar
+- `skills/jmgo-stream-test/assets/high-detail-motion.html` — the final 1080p60 stress page
+- `skills/jmgo-stream-test/assets/latency-clock.html` — qualitative latency experiments, with instrumentation caveats
+- `skills/jmgo-stream-test/references/hitch-investigation.md` — eliminated hypotheses and root-cause evidence
+- `skills/jmgo-stream-test/references/e2e-certification.md` — acceptance ledger and nonintrusive test protocol
+- `skills/jmgo-stream-test/references/measurements.json` — sanitized baseline and certified results
 
 ## Development
 

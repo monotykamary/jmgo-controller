@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+skill_dir="$(dirname "$script_dir")"
+cli="$skill_dir/scripts/jmgo-control"
+target_dir="$HOME/.local/bin"
+
+if [ ! -f "$cli" ]; then
+  echo "Error: $cli not found" >&2
+  exit 1
+fi
+
+if ! echo ":$PATH:" | grep -q ":$target_dir:"; then
+  mkdir -p "$target_dir"
+  profile=""
+  for f in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+    if [ -f "$f" ]; then profile="$f"; break; fi
+  done
+  if [ -n "$profile" ] && ! grep -q '\.local/bin' "$profile"; then
+    printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$profile"
+    echo "Added $target_dir to PATH in $profile"
+  fi
+  export PATH="$target_dir:$PATH"
+fi
+
+mkdir -p "$target_dir"
+chmod +x "$cli" "$script_dir/test"
+ln -sf "$cli" "$target_dir/jmgo-control"
+echo "Linked: $target_dir/jmgo-control"
+
+if ! command -v jmgo >/dev/null 2>&1; then
+  repo_root="$(cd "$skill_dir/../.." 2>/dev/null && pwd || true)"
+  if [ -f "$repo_root/package.json" ] && grep -q '"name": "jmgo-controller"' "$repo_root/package.json"; then
+    if [ ! -f "$repo_root/dist/cli.js" ]; then
+      if command -v pnpm >/dev/null 2>&1; then pnpm --dir "$repo_root" build; else echo "Warning: pnpm is required to build jmgo-controller" >&2; fi
+    fi
+    if [ -f "$repo_root/dist/cli.js" ]; then
+      chmod +x "$repo_root/dist/cli.js"
+      ln -sf "$repo_root/dist/cli.js" "$target_dir/jmgo"
+      echo "Linked: $target_dir/jmgo"
+    fi
+  else
+    echo "Warning: jmgo is not installed. Install jmgo-controller globally, then rerun setup." >&2
+  fi
+fi

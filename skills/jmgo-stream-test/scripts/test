@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+tmp="$(mktemp "${TMPDIR:-/tmp}/jmgo-timestats-test.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp" <<'EOF'
+layerName = SurfaceView - com.limelight.noirdebug/com.limelight.Game#0
+packageName =
+totalFrames = 120
+droppedFrames = 0
+lateAcquireFrames = 0
+badDesiredPresentFrames = 0
+averageFPS = 60.000
+present2present histogram is as below:
+15ms=10 16ms=90 17ms=20 34ms=0 1000ms=0
+
+EOF
+out=$(node "$script_dir/parse-timestats.mjs" "$tmp")
+printf '%s' "$out" | grep -q '"passed":true' || { echo "FAIL: parser did not certify fixture" >&2; exit 1; }
+"$script_dir/jmgo-stream-test" --help | grep -q 'no midpoint probes' || { echo "FAIL: help missing" >&2; exit 1; }
+echo "PASS: jmgo-stream-test parser and CLI smoke test"

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+  source_dir="$(cd "$(dirname "$source_path")" && pwd)"
+  target="$(readlink "$source_path")"
+  case "$target" in /*) source_path="$target" ;; *) source_path="$source_dir/$target" ;; esac
+done
+script_dir="$(cd "$(dirname "$source_path")" && pwd)"
+repo_root="$(cd "$script_dir/../../.." 2>/dev/null && pwd || true)"
+
+if command -v jmgo >/dev/null 2>&1; then
+  exec jmgo "$@"
+fi
+if [ -n "$repo_root" ] && [ -f "$repo_root/dist/cli.js" ]; then
+  exec node "$repo_root/dist/cli.js" "$@"
+fi
+if command -v npx >/dev/null 2>&1; then
+  exec npx --yes jmgo-controller "$@"
+fi
+
+echo "Error: jmgo is not on PATH. Run this skill's scripts/setup or install jmgo-controller." >&2
+exit 127

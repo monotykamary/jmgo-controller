@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>JMGO qualitative latency clock</title>
+<style>html,body,canvas{margin:0;width:100%;height:100%;overflow:hidden;background:#500}canvas{display:block}</style>
+<canvas id="c"></canvas>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d',{alpha:false});
+function resize(){const d=devicePixelRatio||1;c.width=innerWidth*d;c.height=innerHeight*d}
+addEventListener('resize',resize);resize();
+function draw(){
+  const w=c.width,h=c.height,t=Math.floor(Date.now()/10)&65535;
+  x.fillStyle='#600';x.fillRect(0,0,w,h);
+  for(let i=0;i<16;i++){x.fillStyle=(t&(1<<i))?'#fff':'#000';x.fillRect(i*w/16,0,w/16+2,260)}
+  x.fillStyle='#08243b';x.fillRect(0,280,w,h-280);
+  x.fillStyle='#fff';x.font='52px monospace';x.fillText(`10 ms binary host clock: ${t}`,40,380);
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script>

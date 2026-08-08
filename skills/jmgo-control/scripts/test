@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -uo pipefail
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+out=$("$script_dir/jmgo-control" --help 2>&1); rc=$?
+if [ "$rc" -ne 0 ]; then echo "$out" >&2; exit 1; fi
+printf '%s' "$out" | grep -q 'jmgo artemis' || { echo "FAIL: Artemis command missing" >&2; exit 1; }
+printf '%s' "$out" | grep -q 'jmgo remote' || { echo "FAIL: remote command missing" >&2; exit 1; }
+echo "PASS: jmgo-control CLI smoke test"
