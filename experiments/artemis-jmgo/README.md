@@ -12,6 +12,7 @@ The solution uses buffering at each blocking boundary rather than changing H.264
 - MediaCodec is fed 70 ms ahead and its bursty network enqueue timestamps are replaced with the smoothed presentation clock.
 - `OMX.MS.AVC.Decoder` outputs into a 12-slot `YUV_420_888` ImageReader.
 - A monotonic urgent-display thread starts with four decoded frames and presents one every 16.67 ms through ImageWriter.
+- Each writer image inherits the decoded 1280×720 crop rectangle. SurfaceFlinger then scales that region across the 1920×1080 video layer instead of displaying it in the upper-left with an uninitialized border.
 - Plane copies use three direct-buffer JNI calls per frame; native stride-aware `memcpy` is required because Java row copies only reached 45–49 FPS.
 - AudioTrack receives a 120 ms device buffer. A preallocated 32-frame PCM pool moves blocking writes to an audio-priority worker, preserving samples without blocking Moonlight's receive callback.
 
@@ -72,7 +73,7 @@ A 60-second controlled-motion run on 2026-08-08 used Sunshine's `h264_videotoolb
 - decoded image-ring empties and timer delays: 0
 - audio queue drops, AudioTrack failures, and legacy pending-audio backlogs: 0
 
-A fresh 30-second run after removing diagnostic probes reproduced 100% 15–18 ms intervals with a 17 ms maximum and zero faults.
+A fresh 30-second run after removing diagnostic probes reproduced 100% 15–18 ms intervals with a 17 ms maximum and zero faults. After adding crop propagation for full-screen output, a final clean-clone 15-second hardware run presented 915/915 frames at 15–18 ms, with a 17 ms maximum and zero compositor, pipeline, or audio faults.
 
 ## Patch layout
 

@@ -154,7 +154,7 @@ index 53cbf68..7366179 100755
              // Close our audio effect control session when we're stopping
              Intent i = new Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
 diff --git a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
-index 537b50f..e75ee6d 100755
+index 537b50f..a20b248 100755
 --- a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 @@ -8,6 +8,7 @@ import java.util.Arrays;
@@ -217,7 +217,7 @@ index 537b50f..e75ee6d 100755
  
          configuredFormat = format;
  
-@@ -571,6 +587,87 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -571,6 +587,91 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          }
      }
  
@@ -284,6 +284,10 @@ index 537b50f..e75ee6d 100755
 +    }
 +
 +    private void copyDecodedImage(Image source, Image destination) {
++        // ImageWriter allocates buffers at the physical Surface size. Preserve the decoded
++        // crop so SurfaceFlinger scales the 720p image across the full display layer.
++        destination.setCropRect(source.getCropRect());
++
 +        Image.Plane[] sourcePlanes = source.getPlanes();
 +        Image.Plane[] destinationPlanes = destination.getPlanes();
 +        if (sourcePlanes.length != destinationPlanes.length) {
@@ -305,7 +309,7 @@ index 537b50f..e75ee6d 100755
      private boolean tryConfigureDecoder(MediaCodecInfo selectedDecoderInfo, MediaFormat format, boolean throwOnCodecError) {
          boolean configured = false;
          try {
-@@ -675,7 +772,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -675,7 +776,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
  
              MediaFormat mediaFormat = createBaseMediaFormat(mimeType);
              // This will try low latency options until we find one that works (or we give up).
@@ -315,7 +319,7 @@ index 537b50f..e75ee6d 100755
              //todo 色彩格式
  //            MediaCodecInfo.CodecCapabilities codecCapabilities = selectedDecoderInfo.getCapabilitiesForType(mimeType);
  //            int[] colorFormats=codecCapabilities.colorFormats;
-@@ -718,6 +816,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -718,6 +820,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          this.videoFormat = format;
          this.refreshRate = redrawRate;
  
@@ -329,7 +333,7 @@ index 537b50f..e75ee6d 100755
          return initializeDecoder(false);
      }
  
-@@ -745,6 +850,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -745,6 +854,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                  nextInputBuffer = null;
                  nextInputBufferIndex = -1;
                  outputBufferQueue.clear();
@@ -338,7 +342,7 @@ index 537b50f..e75ee6d 100755
  
                  // If we just need a flush, do so now with all threads quiesced.
                  if (codecRecoveryType.get() == CR_RECOVERY_TYPE_FLUSH) {
-@@ -1035,6 +1142,78 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1035,6 +1146,78 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          Choreographer.getInstance().postFrameCallback(this);
      }
  
@@ -417,7 +421,7 @@ index 537b50f..e75ee6d 100755
      private void startChoreographerThread() {
          if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED) {
              // Not using Choreographer in this pacing mode
-@@ -1060,6 +1239,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1060,6 +1243,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          rendererThread = new Thread() {
              @Override
              public void run() {
@@ -425,7 +429,7 @@ index 537b50f..e75ee6d 100755
                  BufferInfo info = new BufferInfo();
                  while (!stopping) {
                      try {
-@@ -1108,26 +1288,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1108,26 +1292,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                  activeWindowVideoStats.totalFramesRendered++;
                              }
                              else {
@@ -467,7 +471,7 @@ index 537b50f..e75ee6d 100755
                              }
  
                              // Add delta time to the totals (excluding probable outliers)
-@@ -1241,7 +1418,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1241,7 +1422,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      @Override
      public void start() {
          startRendererThread();
@@ -482,7 +486,7 @@ index 537b50f..e75ee6d 100755
      }
  
      // !!! May be called even if setup()/start() fails !!!
-@@ -1253,6 +1436,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1253,6 +1440,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          if (rendererThread != null) {
              rendererThread.interrupt();
          }
@@ -492,7 +496,7 @@ index 537b50f..e75ee6d 100755
  
          // Stop any active codec recovery operations
          synchronized (codecRecoveryMonitor) {
-@@ -1294,6 +1480,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1294,6 +1484,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
              }
          }
  
@@ -508,7 +512,7 @@ index 537b50f..e75ee6d 100755
          // Wait for the renderer thread to shut down
          try {
              rendererThread.join();
-@@ -1310,6 +1505,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1310,6 +1509,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      @Override
      public void cleanup() {
          videoDecoder.release();
