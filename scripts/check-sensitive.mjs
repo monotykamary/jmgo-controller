@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 
 const root = new URL("../", import.meta.url);
-const ignoredDirectories = new Set([".git", ".test-dist", "dist", "node_modules"]);
+const ignoredDirectories = new Set([".git", ".pi", ".test-dist", "dist", "node_modules"]);
 const blockedExtensions = new Set([
   ".aab",
   ".apk",

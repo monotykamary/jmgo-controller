@@ -79,6 +79,22 @@ jmgo host set 192.168.1.50
 jmgo host clear
 ```
 
+## Help and shell completions
+
+Every command documents itself progressively: `jmgo --help` lists the command
+groups, `jmgo remote --help` shows the remote subcommands, and
+`jmgo remote key --help` lists every key with its Android key code. Mistyped
+commands suggest the closest match.
+
+Tab-completion covers subcommands, flags, remote keys, and static choices for
+bash, zsh, and fish:
+
+```bash
+jmgo completions zsh              # print the script (eval/source it)
+jmgo completions zsh --install    # wire it into your shell (auto-loaded directory, or an rc-file block)
+jmgo completions zsh --uninstall  # remove it
+```
+
 ## Native remote control
 
 ```bash

@@ -20,27 +20,20 @@ import { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js
 import { discover } from "./discovery.js";
 import { installFromPlay } from "./play.js";
 import { findExecutable, runProcess } from "./process.js";
+import { runCompletion } from "./completion.js";
+import { completionScriptFor, isSupportedShell, supportedShells } from "./completion-scripts.js";
+import { renderHelp, suggest } from "./help.js";
 import { keyCodes, Remote, type RemoteKey } from "./remote.js";
 import { runScrcpy } from "./scrcpy.js";
+import { unwireShellCompletions, wireShellCompletions } from "./shell-completions.js";
+import { commandSpec, resolveCommandPath } from "./spec.js";
 
-const help = `jmgo-controller
-
-Usage:
-  jmgo discover [set] [--network CIDR] [--timeout MS]
-  jmgo host <show|set IP|clear>
-  jmgo remote [--host IP] status [--include-identifiers]
-  jmgo remote [--host IP] volume [up|down|set LEVEL]
-  jmgo remote [--host IP] key <${Object.keys(keyCodes).join("|")}>
-  jmgo remote [--host IP] watch [--include-identifiers]
-  jmgo adb [--host IP] <info|current|audio|packages|install|uninstall|launch|screenshot>
-  jmgo scrcpy [--host IP] [--mirror] [-- SCRCPY_ARGS...]
-  jmgo artemis [open] [--host IP] [--monitor ID|NAME|primary] [--minimum-fps FPS] [--app INDEX|NAME] [--pc NAME] [--no-restart]
-  jmgo artemis <apps|monitors> [--json]
-  jmgo play <link|search|info>
-  jmgo play [--host IP] install PACKAGE [--arch tv] [--languages LIST]
-  jmgo doctor [--host IP]
-
-Set JMGO_HOST to avoid passing --host repeatedly.`;
+function usageError(commandPath: string, value: string | undefined, choices: readonly string[]): Error {
+  const hint = value !== undefined ? suggest(value, choices) : undefined;
+  const where = commandPath === "" ? "jmgo" : `jmgo ${commandPath}`;
+  const detail = value === undefined ? `${where} requires a command` : `unknown command for ${where}: ${value}`;
+  return new Error(`${detail}${hint ? `. Did you mean "${hint}"?` : ""}\nrun "${where} --help" for usage`);
+}
 
 function takeOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -80,20 +73,26 @@ async function remoteCommand(args: string[]): Promise<void> {
     console.log(JSON.stringify(await remote.readState(1_000, takeFlag(args, "--include-identifiers")), null, 2));
   } else if (command === "key") {
     const key = args.shift() as RemoteKey | undefined;
-    if (!key || !(key in keyCodes)) throw new Error("a valid remote key is required");
+    if (!key || !(key in keyCodes)) {
+      throw new Error(
+        `${key ? `unknown remote key: ${key}` : "remote key requires a key name"}\nkeys: ${Object.keys(keyCodes).join(", ")}\nrun "jmgo remote key --help" for details`,
+      );
+    }
     await remote.press(key);
   } else if (command === "volume") {
     const action = args.shift();
     if (!action) console.log((await remote.readState()).volume ?? "unknown");
     else if (action === "up" || action === "down") await remote.press(`volume-${action}`);
     else if (action === "set") await remote.setVolume(Number(args.shift()));
-    else throw new Error(`unknown volume action: ${action}`);
+    else {
+      throw new Error(
+        `unknown volume action: ${action}${suggest(action, ["up", "down", "set"]) ? `. Did you mean "${suggest(action, ["up", "down", "set"])}"?` : ""}\nrun "jmgo remote volume --help" for usage`,
+      );
+    }
   } else if (command === "watch") {
     const include = takeFlag(args, "--include-identifiers");
     for await (const state of remote.watch(include)) console.log(JSON.stringify(state));
-  } else {
-    throw new Error("remote command must be status, key, volume, or watch");
-  }
+  } else throw usageError("remote", command, ["status", "key", "volume", "watch"]);
 }
 
 async function adbCommand(args: string[]): Promise<void> {
@@ -117,7 +116,7 @@ async function adbCommand(args: string[]): Promise<void> {
     const output = args.shift();
     if (!output) throw new Error("screenshot requires an output path");
     console.log(await adb.screenshot(output));
-  } else throw new Error("unknown adb command");
+  } else throw usageError("adb", command, ["info", "current", "audio", "packages", "install", "uninstall", "launch", "screenshot"]);
 }
 
 async function scrcpyCommand(args: string[]): Promise<void> {
@@ -175,7 +174,7 @@ async function artemisCommand(args: string[]): Promise<void> {
     }
     return;
   }
-  if (action !== "open") throw new Error("artemis command must be open, apps, or monitors");
+  if (action !== "open") throw usageError("artemis", action, ["open", "apps", "monitors"]);
 
   const monitorSelector = takeOption(args, "--monitor");
   const minimumFpsOption = takeOption(args, "--minimum-fps");
@@ -263,7 +262,37 @@ async function playCommand(args: string[]): Promise<void> {
     });
     console.log(result.output);
     console.log(`signer-sha256: ${result.signerSha256}`);
-  } else throw new Error("play command must be link, search, info, or install");
+  } else throw usageError("play", command, ["link", "search", "info", "install"]);
+}
+
+async function completionsCommand(args: string[]): Promise<void> {
+  const install = takeFlag(args, "--install");
+  const uninstall = takeFlag(args, "--uninstall");
+  const shell = args.shift();
+  if (shell === undefined || !isSupportedShell(shell)) {
+    throw new Error(
+      `${shell === undefined ? "completions requires a shell name" : `unknown shell: ${shell}`} (supported: ${supportedShells.join(", ")})\nrun "jmgo completions --help" for usage`,
+    );
+  }
+  if (install && uninstall) throw new Error("choose --install or --uninstall, not both");
+  if (install) {
+    const result = await wireShellCompletions(shell);
+    if (result.method === "drop-dir") {
+      console.log(`installed ${shell} completions to ${result.path}`);
+      console.log("start a new shell; it loads them automatically");
+    } else {
+      console.log(`wired ${shell} completions into ${result.path}`);
+      console.log("start a new shell, or source that file");
+    }
+    return;
+  }
+  if (uninstall) {
+    const result = await unwireShellCompletions(shell);
+    if (result.rcRemoved || result.dropRemoved) console.log(`removed ${shell} completions`);
+    else console.log(`${shell} completions were not installed`);
+    return;
+  }
+  process.stdout.write(completionScriptFor(shell));
 }
 
 async function main(): Promise<void> {
@@ -273,11 +302,31 @@ async function main(): Promise<void> {
     console.log(packageJson.version);
     return;
   }
-  if (args.length === 0 || takeFlag(args, "--help") || takeFlag(args, "-h")) {
-    console.log(help);
+  // Help is progressive: --help resolves against the already-typed command
+  // path, so "jmgo remote --help" shows remote help and "jmgo remote key
+  // --help" shows the key list. Flags after a bare "--" belong to scrcpy.
+  const separator = args.indexOf("--");
+  const helpScan = separator === -1 ? args : args.slice(0, separator);
+  if (args.length === 0) {
+    process.stdout.write(renderHelp());
     return;
   }
-  const command = args.shift();
+  if (helpScan.includes("--help") || helpScan.includes("-h")) {
+    takeFlag(args, "--help");
+    takeFlag(args, "-h");
+    process.stdout.write(renderHelp(resolveCommandPath(args).path));
+    return;
+  }
+  const command = args.shift() as string;
+  if (command === "_completion") {
+    const words = args[0] === "--" ? args.slice(1) : args;
+    process.stdout.write(runCompletion(words));
+    return;
+  }
+  if (command === "completions") {
+    await completionsCommand(args);
+    return;
+  }
   if (command === "discover") {
     const shouldSave = args[0] === "set";
     if (shouldSave) args.shift();
@@ -303,7 +352,7 @@ async function main(): Promise<void> {
     } else if (action === "clear") {
       await clearSavedHost();
       console.log(`cleared ${configPath()}`);
-    } else throw new Error("host command must be show, set, or clear");
+    } else throw usageError("host", action, ["show", "set", "clear"]);
   } else if (command === "remote") await remoteCommand(args);
   else if (command === "adb") await adbCommand(args);
   else if (command === "scrcpy") await scrcpyCommand(args);
@@ -322,7 +371,13 @@ async function main(): Promise<void> {
     if (!report.host || !report.adb || !report.scrcpy || !report.apksigner || !report.gplaydl) {
       process.exitCode = 1;
     }
-  } else throw new Error(`unknown command: ${command}`);
+  } else {
+    throw usageError(
+      "",
+      command,
+      commandSpec.subcommands.map((child) => child.name),
+    );
+  }
 }
 
 main().catch((error: unknown) => {
