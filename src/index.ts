@@ -2,14 +2,21 @@ export { Adb, AdbError, extractPng } from "./adb.js";
 export {
   ARTEMIS_PACKAGE,
   ArtemisError,
+  buildArtemisAppLaunchCommand,
   listMonitors,
+  listSunshineApps,
+  parseSunshineApps,
   parseSystemProfilerDisplays,
+  readSunshineHostName,
   readSunshineMonitor,
   resolveMonitor,
+  resolveSunshineApp,
   restartSunshine,
   saveSunshineMonitor,
+  sunshineAppsPath,
   sunshineConfigPath,
   type Monitor,
+  type SunshineApp,
   updateSunshineMonitorConfig,
 } from "./artemis.js";
 export { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";

@@ -2,8 +2,8 @@
 name: jmgo-artemis
 description: >-
   Build, install, configure, and open the hardware-certified JMGO Artemis Lab
-  Moonlight client; list/select the local Sunshine monitor and restart Sunshine
-  before launch to clear orphaned Desktop sessions and avoid the empty popup.
+  Moonlight client; list/select the local Sunshine monitor or application and
+  restart Sunshine before launch to clear orphaned sessions and avoid the empty popup.
   Use for hitch-free low-latency 720p60 or 1080p60 H.264 streaming on JMGO S901.
   Requires jmgo, ADB, Sunshine on macOS, and the projector on the same LAN.
 setup: bash scripts/setup
@@ -43,6 +43,20 @@ jmgo-artemis --monitor "Studio Display"
 ```
 
 Monitor selection updates only `output_name` in the private Sunshine configuration and requires restart. Numeric IDs come from macOS `system_profiler`; names must match exactly, case-insensitively.
+
+## Choose a Sunshine application
+
+```bash
+jmgo-artemis apps
+jmgo-artemis apps --json
+jmgo-artemis --app 1
+jmgo-artemis --app "Desktop"
+jmgo-artemis --monitor primary --app "Steam Big Picture"
+```
+
+`apps` emits only one-based indexes and names from Sunshine `apps.json`; it never returns commands, environment variables, or prep scripts. `--app` starts the matching entry directly through Artemis's shortcut activity without host/app-grid taps. Use `--pc "NAME"` only if the paired host differs from Sunshine's configured name or the local hostname. If an entry was just added, open the host once in Artemis to refresh its app cache.
+
+Application selection launches one Sunshine entry, but capture remains monitor-based rather than restricted to one macOS window.
 
 ## Certified client profile
 

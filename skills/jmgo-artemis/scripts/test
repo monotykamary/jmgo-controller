@@ -6,4 +6,7 @@ out=$("$script_dir/jmgo-artemis" monitors --json 2>&1); rc=$?
 if [ "$rc" -ne 0 ]; then echo "$out" >&2; exit 1; fi
 printf '%s' "$out" | grep -q '"id"' || { echo "FAIL: no monitor ID" >&2; exit 1; }
 printf '%s' "$out" | grep -q '"selected"' || { echo "FAIL: no selected monitor" >&2; exit 1; }
-echo "PASS: jmgo-artemis monitor discovery"
+apps=$("$script_dir/jmgo-artemis" apps --json 2>&1); rc=$?
+if [ "$rc" -ne 0 ]; then echo "$apps" >&2; exit 1; fi
+printf '%s' "$apps" | node -e 'const fs=require("node:fs"); const apps=JSON.parse(fs.readFileSync(0,"utf8")); if (!Array.isArray(apps)||apps.length===0||apps.some((app)=>Object.keys(app).sort().join(",")!=="index,name")) process.exit(1)' || { echo "FAIL: unsafe or empty app metadata" >&2; exit 1; }
+echo "PASS: jmgo-artemis monitor and app discovery"

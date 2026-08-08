@@ -4,9 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  buildArtemisAppLaunchCommand,
+  listSunshineApps,
+  parseSunshineApps,
   parseSystemProfilerDisplays,
+  readSunshineHostName,
   readSunshineMonitor,
   resolveMonitor,
+  resolveSunshineApp,
   saveSunshineMonitor,
   updateSunshineMonitorConfig,
 } from "../src/artemis.js";
@@ -63,6 +68,66 @@ test("Sunshine monitor update replaces duplicates and preserves other options", 
   );
   assert.equal(updateSunshineMonitorConfig("hevc_mode = 1\n", "1"), "hevc_mode = 1\noutput_name = 1\n");
   assert.throws(() => updateSunshineMonitorConfig("", "DP-1"), /invalid monitor ID/);
+});
+
+test("Sunshine app parsing exposes only ordered names", async () => {
+  const document = JSON.stringify({
+    env: { SECRET: "not returned" },
+    apps: [
+      { name: "Desktop", cmd: "sensitive command" },
+      { name: "  Steam Big Picture  ", detached: ["private"] },
+      { cmd: "missing name" },
+    ],
+  });
+  const expected = [
+    { index: 1, name: "Desktop" },
+    { index: 2, name: "Steam Big Picture" },
+  ];
+  assert.deepEqual(parseSunshineApps(document), expected);
+
+  const directory = await mkdtemp(join(tmpdir(), "jmgo-apps-test-"));
+  try {
+    const path = join(directory, "apps.json");
+    await writeFile(path, document);
+    assert.deepEqual(await listSunshineApps(path), expected);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Sunshine app selection accepts exact names and one-based indexes", () => {
+  const apps = parseSunshineApps('{"apps":[{"name":"Desktop"},{"name":"Steam Big Picture"}]}');
+  assert.equal(resolveSunshineApp(apps, "desktop").index, 1);
+  assert.equal(resolveSunshineApp(apps, "2").name, "Steam Big Picture");
+  assert.throws(() => resolveSunshineApp(apps, "missing"), /unknown Sunshine app/);
+  assert.throws(
+    () => parseSunshineApps('{"apps":[{"name":"Desktop"},{"name":"desktop"}]}'),
+    /duplicate Sunshine app name/,
+  );
+  assert.throws(
+    () => resolveSunshineApp([...apps, { index: 3, name: "Desktop" }], "Desktop"),
+    /ambiguous/,
+  );
+});
+
+test("Sunshine host name honors configuration and has a safe fallback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jmgo-hostname-test-"));
+  try {
+    const path = join(directory, "sunshine.conf");
+    await writeFile(path, 'sunshine_name = "Living Room Mac"\n');
+    assert.equal(await readSunshineHostName(path, "fallback.local"), "Living Room Mac");
+    assert.equal(await readSunshineHostName(join(directory, "missing"), "fallback.local"), "fallback.local");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Artemis named-app intent shell-quotes every external value", () => {
+  assert.equal(
+    buildArtemisAppLaunchCommand("Bob's Game; reboot", "Living Room Mac"),
+    "am start -n 'com.limelight.noirdebug/com.limelight.ShortcutTrampoline' --es Name 'Living Room Mac' --es AppName 'Bob'\"'\"'s Game; reboot'",
+  );
+  assert.throws(() => buildArtemisAppLaunchCommand("bad\nname", "host"), /unsupported/);
 });
 
 test("Sunshine monitor save is atomic and private", async () => {

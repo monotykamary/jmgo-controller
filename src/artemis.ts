@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { findExecutable, runProcess } from "./process.js";
 
 export const ARTEMIS_PACKAGE = "com.limelight.noirdebug";
+const ARTEMIS_SHORTCUT_COMPONENT = `${ARTEMIS_PACKAGE}/com.limelight.ShortcutTrampoline`;
+
+export type SunshineApp = {
+  index: number;
+  name: string;
+};
 
 export type Monitor = {
   id: string;
@@ -113,6 +119,116 @@ export function resolveMonitor(monitors: readonly Monitor[], selector: string): 
   throw new ArtemisError(
     `unknown monitor: ${selector}; available IDs: ${monitors.map((monitor) => monitor.id).join(", ")}`,
   );
+}
+
+export function parseSunshineApps(output: string): SunshineApp[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new ArtemisError("Sunshine returned invalid apps JSON", { cause: error });
+  }
+
+  const entries =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as { apps?: unknown }).apps
+      : parsed;
+  if (!Array.isArray(entries)) throw new ArtemisError("Sunshine apps JSON has no apps array");
+
+  const apps: SunshineApp[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const name = (entry as { name?: unknown }).name;
+    if (typeof name !== "string" || name.trim().length === 0) continue;
+    apps.push({ index: apps.length + 1, name: name.trim() });
+  }
+  if (apps.length === 0) throw new ArtemisError("no Sunshine applications are configured");
+  const duplicate = apps.find(
+    (app, index) =>
+      apps.findIndex((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase()) !== index,
+  );
+  if (duplicate) {
+    throw new ArtemisError(`duplicate Sunshine app name: ${duplicate.name}; rename one entry`);
+  }
+  return apps;
+}
+
+export function resolveSunshineApp(
+  apps: readonly SunshineApp[],
+  selector: string,
+): SunshineApp {
+  const normalized = selector.trim().toLowerCase();
+  const byName = apps.filter((app) => app.name.toLowerCase() === normalized);
+  if (byName.length === 1) return byName[0] as SunshineApp;
+  if (byName.length > 1) {
+    throw new ArtemisError(`Sunshine app name is ambiguous: ${selector}; rename duplicate entries`);
+  }
+
+  if (/^[1-9]\d*$/.test(selector.trim())) {
+    const byIndex = apps.find((app) => app.index === Number(selector));
+    if (byIndex) return byIndex;
+  }
+  throw new ArtemisError(
+    `unknown Sunshine app: ${selector}; available indexes: ${apps.map((app) => app.index).join(", ")}`,
+  );
+}
+
+export function sunshineAppsPath(): string {
+  if (process.env.SUNSHINE_APPS_FILE) return process.env.SUNSHINE_APPS_FILE;
+  return join(homedir(), ".config", "sunshine", "apps.json");
+}
+
+export async function listSunshineApps(path = sunshineAppsPath()): Promise<SunshineApp[]> {
+  try {
+    return parseSunshineApps(await readFile(path, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new ArtemisError("Sunshine apps.json was not found; configure Sunshine applications first");
+    }
+    throw error;
+  }
+}
+
+export async function readSunshineHostName(
+  path = sunshineConfigPath(),
+  fallback = hostname(),
+): Promise<string> {
+  let contents: string;
+  try {
+    contents = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback;
+    throw error;
+  }
+  const matches = [...contents.matchAll(/^\s*sunshine_name\s*=\s*(.*?)\s*$/gm)];
+  let configured = matches.at(-1)?.[1]?.trim();
+  if (
+    configured &&
+    configured.length >= 2 &&
+    ((configured.startsWith('"') && configured.endsWith('"')) ||
+      (configured.startsWith("'") && configured.endsWith("'")))
+  ) {
+    configured = configured.slice(1, -1).trim();
+  }
+  return configured || fallback;
+}
+
+function quoteAndroidShellArgument(value: string, label: string): string {
+  if (value.length === 0 || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new ArtemisError(`${label} contains unsupported characters`);
+  }
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+export function buildArtemisAppLaunchCommand(appName: string, computerName: string): string {
+  return [
+    "am start -n",
+    quoteAndroidShellArgument(ARTEMIS_SHORTCUT_COMPONENT, "Artemis component"),
+    "--es Name",
+    quoteAndroidShellArgument(computerName, "Sunshine host name"),
+    "--es AppName",
+    quoteAndroidShellArgument(appName, "Sunshine app name"),
+  ].join(" ");
 }
 
 export function sunshineConfigPath(): string {

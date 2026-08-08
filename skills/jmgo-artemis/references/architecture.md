@@ -19,6 +19,14 @@ JMGO's `OMX.MS.AVC.Decoder` batches or stalls direct Surface output. Timestamp t
 
 The ImageReader and PCM queues are capacities, not prefilled latency. They can grow during a burst but add no deliberate steady-state reserve.
 
+## Direct application launch
+
+`jmgo artemis apps` reads Sunshine's local `apps.json` and returns only contiguous one-based indexes and application names. Commands, environment variables, prep scripts, and image paths never leave the parser.
+
+`--app` resolves one of those entries before touching the projector, restarts Sunshine by default, and invokes the exported Artemis `ShortcutTrampoline` with the exact `AppView.NAME_EXTRA` (`Name`) and `Game.EXTRA_APP_NAME` (`AppName`) keys. The trampoline resolves the paired computer and cached GameStream app ID, then starts `Game` directly. Every external value is POSIX-shell quoted before crossing `adb shell`, and control characters are rejected.
+
+This removes host-grid and app-grid taps. It does not change Sunshine's capture boundary: the chosen entry is launched, while video still comes from the selected monitor. Artemis may need one ordinary host opening after a newly added Sunshine entry so its app-list cache includes that name.
+
 ## Activation scope
 
 The image path activates only for:

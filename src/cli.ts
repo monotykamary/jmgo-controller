@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { Adb } from "./adb.js";
 import {
   ARTEMIS_PACKAGE,
+  buildArtemisAppLaunchCommand,
   listMonitors,
+  listSunshineApps,
+  readSunshineHostName,
   readSunshineMonitor,
   resolveMonitor,
+  resolveSunshineApp,
   restartSunshine,
   saveSunshineMonitor,
 } from "./artemis.js";
@@ -27,8 +32,8 @@ Usage:
   jmgo remote [--host IP] watch [--include-identifiers]
   jmgo adb [--host IP] <info|current|audio|packages|install|uninstall|launch|screenshot>
   jmgo scrcpy [--host IP] [--mirror] [-- SCRCPY_ARGS...]
-  jmgo artemis [open] [--host IP] [--monitor ID|NAME|primary] [--no-restart]
-  jmgo artemis monitors [--json]
+  jmgo artemis [open] [--host IP] [--monitor ID|NAME|primary] [--app INDEX|NAME] [--pc NAME] [--no-restart]
+  jmgo artemis <apps|monitors> [--json]
   jmgo play <link|search|info>
   jmgo play [--host IP] install PACKAGE [--arch tv] [--languages LIST]
   jmgo doctor [--host IP]
@@ -121,8 +126,27 @@ async function scrcpyCommand(args: string[]): Promise<void> {
   await runScrcpy(host, { mirror, extraArgs: args });
 }
 
+async function waitForArtemisStream(adb: Adb, appName: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await adb.currentApp()).includes(`${ARTEMIS_PACKAGE}/com.limelight.Game`)) return;
+    await delay(250);
+  }
+  throw new Error(
+    `Artemis did not start ${JSON.stringify(appName)} in time; open the host once to refresh its app list or retry without --no-restart`,
+  );
+}
+
 async function artemisCommand(args: string[]): Promise<void> {
   const action = args[0] && !args[0].startsWith("--") ? args.shift() : "open";
+  if (action === "apps") {
+    const json = takeFlag(args, "--json");
+    if (args.length > 0) throw new Error(`unknown artemis apps option: ${args[0]}`);
+    const apps = await listSunshineApps();
+    if (json) console.log(JSON.stringify(apps, null, 2));
+    else for (const app of apps) console.log(`${app.index} · ${app.name}`);
+    return;
+  }
   if (action === "monitors") {
     const json = takeFlag(args, "--json");
     if (args.length > 0) throw new Error(`unknown artemis monitors option: ${args[0]}`);
@@ -140,16 +164,22 @@ async function artemisCommand(args: string[]): Promise<void> {
     }
     return;
   }
-  if (action !== "open") throw new Error("artemis command must be open or monitors");
+  if (action !== "open") throw new Error("artemis command must be open, apps, or monitors");
 
   const monitorSelector = takeOption(args, "--monitor");
+  const appSelector = takeOption(args, "--app");
+  const computerSelector = takeOption(args, "--pc");
   const noRestart = takeFlag(args, "--no-restart");
   const host = await hostFrom(args);
   if (args.length > 0) throw new Error(`unknown artemis option: ${args[0]}`);
   if (monitorSelector && noRestart) {
     throw new Error("--monitor requires Sunshine restart; remove --no-restart");
   }
+  if (computerSelector && !appSelector) throw new Error("--pc requires --app");
 
+  const selectedApp = appSelector
+    ? resolveSunshineApp(await listSunshineApps(), appSelector)
+    : undefined;
   let selectedMonitor: string | undefined;
   if (monitorSelector) {
     const monitor = resolveMonitor(await listMonitors(), monitorSelector);
@@ -165,9 +195,23 @@ async function artemisCommand(args: string[]): Promise<void> {
     );
   }
   await adb.forceStop(ARTEMIS_PACKAGE);
-  await adb.launch(ARTEMIS_PACKAGE);
-  console.log(`opened JMGO Artemis Lab${selectedMonitor ? ` on ${selectedMonitor}` : ""}`);
-  if (!noRestart) console.log("Sunshine restarted first to clear orphaned Desktop sessions");
+  if (selectedApp) {
+    const computerName = computerSelector ?? (await readSunshineHostName());
+    try {
+      await adb.shell(buildArtemisAppLaunchCommand(selectedApp.name, computerName));
+      await waitForArtemisStream(adb, selectedApp.name);
+    } catch (error) {
+      await adb.forceStop(ARTEMIS_PACKAGE).catch(() => undefined);
+      throw error;
+    }
+    console.log(
+      `streaming ${selectedApp.name} through JMGO Artemis Lab${selectedMonitor ? ` on ${selectedMonitor}` : ""}`,
+    );
+  } else {
+    await adb.launch(ARTEMIS_PACKAGE);
+    console.log(`opened JMGO Artemis Lab${selectedMonitor ? ` on ${selectedMonitor}` : ""}`);
+  }
+  if (!noRestart) console.log("Sunshine restarted first to clear orphaned sessions");
 }
 
 async function playCommand(args: string[]): Promise<void> {

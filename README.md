@@ -14,7 +14,7 @@ The protocol was validated on a JMGO S901 running Bonfire OS. Other models may u
 - Send navigation, volume, home, settings, and power events over TCP port 9005.
 - List, install, uninstall, and launch Android applications through ADB.
 - Capture valid screenshots even when Bonfire OS prefixes binary shell output.
-- Open the certified JMGO Artemis Lab client, clear stale Sunshine sessions, and select the streamed macOS monitor.
+- Open the certified JMGO Artemis Lab client, clear stale Sunshine sessions, and select the streamed macOS monitor and Sunshine application.
 - Use a Mac keyboard and trackpad as control-only Android HID devices through `scrcpy`.
 - Download Play APK splits with `gplaydl`, verify every split has the same signing certificate, and install them in one ADB session.
 - Redact serial numbers and Bluetooth addresses and strip unsafe Unicode formatting by default.
@@ -134,7 +134,21 @@ jmgo artemis --monitor 7
 jmgo artemis --monitor "Studio Display"
 ```
 
-By default the command updates Sunshine's `output_name` when requested, restarts Sunshine, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab. Restarting first clears orphaned Desktop sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor`.
+List Sunshine application entries and directly start one by one-based index or exact name:
+
+```bash
+jmgo artemis apps
+jmgo artemis apps --json
+jmgo artemis --app 1
+jmgo artemis --app "Desktop"
+jmgo artemis --monitor primary --app "Steam Big Picture"
+```
+
+The app listing reads `apps.json` but emits only indexes and names—never commands, environment variables, or preparation scripts. Direct launch uses Artemis's shortcut activity and the paired Sunshine name. Pass `--pc "NAME"` only when the paired client name differs from `sunshine_name` or the local hostname. A newly added Sunshine entry may require opening that host once in Artemis to refresh its app cache.
+
+Selecting an application asks Sunshine to launch one configured application entry; Sunshine still captures the selected monitor rather than isolating an individual macOS window.
+
+By default the command updates Sunshine's `output_name` when requested, restarts Sunshine, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab or the selected application directly. Restarting first clears orphaned sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor`.
 
 The tested streaming profile is H.264, Balanced pacing, 60 FPS, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
 
@@ -231,7 +245,7 @@ npx skills add https://github.com/monotykamary/jmgo-controller
 | Skill | Use it for |
 |---|---|
 | [`jmgo-control`](skills/jmgo-control/SKILL.md) | Discovery, native remote keys and volume, ADB app lifecycle, screenshots, and scrcpy control |
-| [`jmgo-artemis`](skills/jmgo-artemis/SKILL.md) | Building/installing the certified client, opening it without stale-session popups, and choosing the Sunshine monitor |
+| [`jmgo-artemis`](skills/jmgo-artemis/SKILL.md) | Building/installing the certified client, opening it without stale-session popups, and choosing the Sunshine monitor or application |
 | [`jmgo-stream-test`](skills/jmgo-stream-test/SKILL.md) | Saved HTML motion artifacts, hitch investigation, strict SurfaceFlinger/logcat E2E certification, and latency regressions |
 
 Each skill follows the `SKILL.md` + `scripts/setup` + `scripts/test` layout. Supporting files include:
