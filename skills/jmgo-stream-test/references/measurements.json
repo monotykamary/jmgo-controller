@@ -188,7 +188,7 @@
       "presentationHandoffLeadMs": 15,
       "minimumHandoffMarginMs": 5,
       "monotonicDeadlineIncrement": true,
-      "audioTrackCapacityMs": 10,
+      "audioTrackCapacityMs": 300,
       "settingsWifiScannerStopped": true,
       "apkSha256": "f7c97525112eb4aca6c2c4ac53391e5a0a6916a157cb81a5dd797156ea38875a",
       "durationSeconds": 300,
@@ -208,7 +208,35 @@
       "lateInputFrames": 0,
       "surfaceFlingerFaults": 0,
       "audioFaults": 0,
-      "faultEvents": 0
+      "faultEvents": 0,
+      "outcome": "cadence-certified-before-speaker-sync-correction"
+    },
+    {
+      "stage": "rejected-speaker-audio-10ms-request",
+      "audioPacketDurationMs": 5,
+      "requestedAudioTrackCapacityMs": 10,
+      "requestedFrameCount": 480,
+      "serverFrameCount": 4330,
+      "measuredActiveLatencyMs": 187.88,
+      "underruns": 144,
+      "outcome": "rejected-underruns-and-video-clock-mismatch"
+    },
+    {
+      "stage": "speaker-av-sync-correction",
+      "resolution": "1920x1080",
+      "encodedInputLeadMs": 150,
+      "decodedStartImages": 10,
+      "estimatedVideoClockReserveMs": 316.67,
+      "audioPacketDurationMs": 5,
+      "requestedAudioTrackCapacityMs": 200,
+      "configuredAudioTrackBytes": 38400,
+      "serverFrameCount": 9600,
+      "measuredActiveLatencyMs": 315.72,
+      "underruns": 0,
+      "outputRoute": "built-in-speaker",
+      "apkSha256": "7fd9eff6c4815ca1a90fb6dac9f0d72cc89a9b1adc91225b94dc7438f6ad16ac",
+      "buildSource": "fresh-pinned-clone",
+      "outcome": "speaker-clock-aligned"
     }
   ],
   "invalidMeasurement": {

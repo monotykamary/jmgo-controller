@@ -16,9 +16,9 @@ JMGO's `OMX.MS.AVC.Decoder` batches or stalls direct Surface output. Timestamp t
 6. An urgent-display pacer anchors once to Choreographer, then advances a strictly monotonic 16.67 ms deadline. It queues each image 15 ms before VSync and rejects any handoff leaving less than 5 ms of latch margin.
 7. Three stride-aware JNI `memcpy` calls copy Y, U, and V. Java row copies reached only 45–49 FPS at 720p and were rejected.
 8. The destination inherits the source crop. This fixes the 1280×720 image appearing in the upper-left of a 1920×1080 writer buffer with a green/uninitialized remainder.
-9. Audio uses a 10 ms AudioTrack. A preallocated 32-packet PCM pool and audio-priority writer isolate Moonlight's callback from roughly 100 ms JMGO HAL write stalls without dropping samples.
+9. Audio requests a 200 ms AudioTrack (forty 5 ms Moonlight packets). A preallocated 32-packet PCM pool and audio-priority writer isolate Moonlight's callback from JMGO HAL write stalls. On the speaker route, the 9,600-frame track measures about 316 ms active latency with zero underruns.
 
-The final profile prioritizes uninterrupted motion over latency: the native input clock contributes 150 ms and the decoded path waits for ten images before output starts. Five of those images are copy-ready, so the same startup depth can bridge the measured preparation drought without exhausting the eight-slot ImageWriter. The 15-image FIFO remains bounded burst capacity.
+The final profile prioritizes uninterrupted motion over latency: the native input clock contributes 150 ms and the decoded path waits for ten images before output starts. Five of those images are copy-ready, so the same startup depth can bridge the measured preparation drought without exhausting the eight-slot ImageWriter. The resulting video clock is about 317 ms, closely matching the speaker track. The 15-image FIFO remains bounded burst capacity.
 
 On the host, the pinned Sunshine patch retains AVFoundation frames during brief VideoToolbox backpressure and runs the capture callback at user-interactive QoS. Before client launch, the CLI force-stops `com.jmgo.setting.x`; reopening projector Settings during a stream can restart its disruptive Wi-Fi scanner.
 
@@ -43,7 +43,7 @@ Every fallback retains upstream Artemis behavior.
 
 ## Latency sweep
 
-Early latency sweeps reduced the encoded lead to zero, the output start to one image, and AudioTrack capacity from 120 ms to 10 ms. Those variants passed short compositor gates but did not survive sustained, correctly placed high-detail motion: content replacement, ImageReader ownership saturation, preparation droughts, and isolated 32–33 ms repeats remained. The final profile restores 150 ms of encoded lead while retaining the 10 ms audio path.
+Early latency sweeps reduced the encoded lead to zero, the output start to one image, and requested AudioTrack capacity to 10 ms. Those variants passed short compositor gates but did not survive sustained, correctly placed high-detail motion. On the final video path, the projector HAL expanded the 10 ms request to about 90 ms and accumulated 144 underruns, while the later 300 ms request audibly lagged video. The final profile restores 150 ms of encoded lead and uses a measured 200 ms AudioTrack request to align the speaker path without underruns.
 
 Sunshine's 60 FPS floor also generated supplemental closely timed images: the old ring replaced 278 images in 30 seconds even while compositor cadence looked perfect. Setting the floor to 30 removed that overproduction. A 17-slot ImageReader is the hardware-safe ownership limit; 19 slots caused `OMX.MS.AVC.Decoder` buffer registration failure. Five prepared images are the largest tested copy-ready reserve that leaves safe ImageWriter ownership headroom.
 

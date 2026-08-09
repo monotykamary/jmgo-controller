@@ -12,7 +12,7 @@ index c706dbf..3ba792a 100644
              resValue "string", "app_label_game", "Diana (Game)"
  
 diff --git a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
-index 53cbf68..3db5a60 100755
+index 53cbf68..fbdf2b6 100755
 --- a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 @@ -8,6 +8,9 @@ import android.media.AudioManager;
@@ -29,7 +29,7 @@ index 53cbf68..3db5a60 100755
      private final boolean enableAudioFx;
  
      private AudioTrack track;
-+    private static final int JMGO_AUDIO_BUFFER_FRAMES = 60;
++    private static final int JMGO_AUDIO_BUFFER_FRAMES = 40;
 +    private static final int JMGO_AUDIO_QUEUE_FRAMES = 32;
 +    private final ArrayBlockingQueue<short[]> freeAudioFrames =
 +            new ArrayBlockingQueue<>(JMGO_AUDIO_QUEUE_FRAMES);
@@ -45,8 +45,8 @@ index 53cbf68..3db5a60 100755
                      throw new IllegalStateException();
              }
  
-+            // Match the buffered video path while the pooled writer isolates Moonlight's
-+            // receive thread from JMGO's periodic AudioTrack stalls.
++            // Forty 5 ms packets align audio with the 150 ms input lead, ten-image video
++            // reserve, and measured JMGO speaker HAL latency.
 +            bufferSize = Math.max(bufferSize, bytesPerFrame * JMGO_AUDIO_BUFFER_FRAMES);
 +
              // Skip low latency options if hardware sample rate doesn't match the content
