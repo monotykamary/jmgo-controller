@@ -6,7 +6,7 @@ A release is complete only when all checks pass:
 
 1. The installed package is `com.limelight.noirdebug`; old stock/experiment packages are absent.
 2. Artemis negotiates H.264 at the requested 1280×720 or 1920×1080 and 60 FPS.
-3. Logs show 150 ms input lead, decoded and five-image prepared queue depths at timer start, a 38,400-byte stereo AudioTrack request, and `JMGO calculated audio holdback: 415 ms`. On the built-in speaker route, AudioFlinger should report 9,600 frames and zero underruns; its variable latency column is not the A/V synchronization clock.
+3. Logs show 150 ms input lead, decoded and five-image prepared queue depths at timer start, a 38,400-byte stereo AudioTrack request, and `JMGO dynamic audio sync enabled with 415 ms audio baseline` followed by periodic holdback, scheduler compensation, sink lead, queued audio, route change, queue-drain, video-depth, and playback-speed telemetry. On the built-in speaker route, AudioFlinger should report 9,600 frames and zero underruns; its variable latency column is not the A/V synchronization clock.
 4. Patched Sunshine JMGO reports the expected monitor, bitrate, and `minimum_fps_target = 30`; the application firewall permits its LAN traffic. The motion page must be in the dedicated Safari window on that same monitor.
 5. A high-detail motion run with continuous 48 kHz stereo audio has 100% 15–18 ms intervals and maximum 17–18 ms.
 6. SurfaceFlinger dropped, late-acquire, and bad-desired-present counts are zero.
@@ -22,8 +22,8 @@ A release is complete only when all checks pass:
 2. Install the fresh-clone APK.
 3. Run `jmgo-artemis --minimum-fps 30 --monitor 4 --app Desktop` for the certified virtual display, or choose the actual intended monitor/application. This prefers Sunshine JMGO and stops the projector Settings scanner.
 4. Verify the Game activity is foreground and do not reopen projector Settings.
-5. Run `jmgo-stream-test --host HOST --monitor 4 --duration 60`, then certify the final candidate with `--duration 300`. The script creates, verifies, and later closes a dedicated Safari window on the selected display.
-6. Do nothing else during the timed sleep. Do not change tabs in the dedicated virtual-display Safari window.
+5. Run `pnpm simulate:avsync`, then `jmgo-stream-test --host HOST --monitor 4 --duration 20` for fast convergence feedback and `--duration 60` for the ordinary hardware gate. Certify the final candidate with one idle `--duration 300` soak. The script creates, verifies, and later closes a dedicated Safari window on the selected display while restoring the previously frontmost application after setup.
+6. Do nothing else during the definitive five-minute sleep. An interactive-machine pass is a separate stress test because foreground applications share WindowServer, GPU, capture, encoder, and network resources; it cannot be relabeled as controlled certification.
 7. Treat any long gap or fault event as failure; inspect timestamps before rerunning.
 8. Use `--screenshot /tmp/result.png` only after timing.
 
@@ -50,11 +50,14 @@ The test rejects log lines containing:
 - ImageReader stall or ImageWriter rejection
 - audio queue drop or AudioTrack write failure
 - legacy pending-audio backlog
+- queued audio at or above 1,100 ms or any pressure-drain sample
+- more than 75 ms of tail route/video error
+- playback pinned near 0.98 or 1.02 for all three tail samples
 - fatal exception
 
 ## Audio
 
-The script generates two low-volume PCM sine channels at 440 Hz and 880 Hz, 48 kHz, 16-bit stereo. This exercises host capture, Opus transport, client PCM pooling, AudioTrack, and the projector output without committing an audio artifact. It detects audio-path faults but not lip sync. The calculated holdback must equal `150 + ((10 + 5) / 60 × 1000) + 15 = 415 ms`; the final 15 ms is the pacer's pre-VSync handoff interval. Speaker synchronization uses a zero-source-offset flash/click clip rendered natively on the exact captured monitor; ADB screencapture cannot observe acoustic output.
+The script generates two low-volume PCM sine channels at 440 Hz and 880 Hz, 48 kHz, 16-bit stereo. This exercises host capture, Opus transport, client PCM pooling, AudioTrack, and the projector output without committing an audio artifact. It detects audio-path and controller-convergence faults but not acoustic lip sync. The release baseline must equal `150 + ((10 + 5) / 60 × 1000) + 15 = 415 ms`. Video reports relative source-timestamp-to-target-VSync depth. Audio reports relative ready-queue plus sink lead after 64 valid route samples. Their difference drives pitch-preserving playback between 0.98 and 1.02; at 220 of 256 queued packets, anti-windup forces +2% drain. Speaker synchronization still requires a zero-source-offset flash/click clip rendered natively on the captured monitor; ADB screencapture cannot observe acoustic output.
 
 ## Screenshot normalization
 

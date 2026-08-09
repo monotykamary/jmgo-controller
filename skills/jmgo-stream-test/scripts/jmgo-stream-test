@@ -117,15 +117,18 @@ if [ "$audio" -eq 1 ]; then
     -map '[a]' -c:a pcm_s16le "$work/tone.wav"
 fi
 
+restore_app="$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')"
 asset_url="$(node -e 'const {pathToFileURL}=require("url"); console.log(pathToFileURL(process.argv[1]).href)' "$asset")"
 opened_window_id="$(osascript \
   -e 'on run argv' \
+  -e 'set restoreApp to item 2 of argv' \
   -e 'tell application "Safari"' \
   -e 'make new document with properties {URL:item 1 of argv}' \
   -e 'activate' \
+  -e 'tell application "System Events" to set frontmost of first application process whose name is my restoreApp to true' \
   -e 'return id of front window' \
   -e 'end tell' \
-  -e 'end run' "$asset_url")"
+  -e 'end run' "$asset_url" "$restore_app")"
 case "$opened_window_id" in *[!0-9]*|'') echo "unable to create dedicated Safari window" >&2; exit 1 ;; esac
 opened=1
 placed=0
@@ -137,12 +140,14 @@ for _ in 1 2 3 4 5; do
     -e 'set topEdge to item 3 of argv as integer' \
     -e 'set rightEdge to item 4 of argv as integer' \
     -e 'set bottomEdge to item 5 of argv as integer' \
+    -e 'set restoreApp to item 6 of argv' \
     -e 'tell application "Safari"' \
     -e 'set bounds of (first window whose id is windowID) to {leftEdge, topEdge, rightEdge, bottomEdge}' \
     -e 'activate' \
+    -e 'tell application "System Events" to set frontmost of first application process whose name is my restoreApp to true' \
     -e 'return bounds of (first window whose id is windowID)' \
     -e 'end tell' \
-    -e 'end run' "$opened_window_id" "$display_x" "$display_y" "$display_right" "$display_bottom" 2>/dev/null)"; then
+    -e 'end run' "$opened_window_id" "$display_x" "$display_y" "$display_right" "$display_bottom" "$restore_app" 2>/dev/null)"; then
     placed=1
     break
   fi
@@ -183,7 +188,18 @@ metrics_rc=$?
 set -e
 printf '%s\n' "$metrics"
 
-fault_pattern='queue overflow|decoded image queue dropped|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer slow|prepared image queue slow|prepared image queue empty|prepared image handoff late|image writer rejected|image reader stalled|WifiTracker.*fetchScanResults|FATAL EXCEPTION|input pacing late'
+avsync_rc=0
+if [ "$audio" -eq 1 ] && [ "$duration" -ge 20 ]; then
+  set +e
+  avsync_metrics="$(node "$script_dir/parse-avsync-log.mjs" "$work/logcat.txt")"
+  avsync_rc=$?
+  set -e
+  printf '%s\n' "$avsync_metrics"
+else
+  printf '{"avSyncEvaluated":false}\n'
+fi
+
+fault_pattern='queue overflow|decoded image queue (dropped|backpressure timed out)|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer slow|prepared image queue slow|prepared image queue empty|prepared image handoff late|image writer rejected|image reader stalled|WifiTracker.*fetchScanResults|FATAL EXCEPTION|input pacing late'
 faults=$(grep -Eic "$fault_pattern" "$work/logcat.txt" || true)
 printf '{"faultEvents":%s,"audioEnabled":%s,"durationSeconds":%s}\n' "$faults" "$([ "$audio" -eq 1 ] && echo true || echo false)" "$duration"
 if [ "$faults" -ne 0 ]; then
@@ -198,4 +214,4 @@ if [ -n "$screenshot" ]; then
   echo "screenshot: $screenshot" >&2
 fi
 
-if [ "$metrics_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi
+if [ "$metrics_rc" -ne 0 ] || [ "$avsync_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi

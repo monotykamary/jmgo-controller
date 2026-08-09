@@ -169,7 +169,7 @@ test("Sunshine monitor save is atomic and private", async () => {
   }
 });
 
-test("Artemis speaker holdback is derived from the video presentation budget", async () => {
+test("Artemis A/V clock slews audio from measured video presentation", async () => {
   const [patch, nativePatch] = await Promise.all([
     readFile(
       join(process.cwd(), "experiments", "artemis-jmgo", "artemis-v20.2.6.patch"),
@@ -182,7 +182,7 @@ test("Artemis speaker holdback is derived from the video presentation budget", a
   ]);
   const integerConstant = (name: string): number => {
     const match = patch.match(new RegExp(`${name} = (\\d+);`, "u"));
-    assert.ok(match, `missing ${name}`);
+    assert.ok(match?.[1], `missing ${name}`);
     return Number(match[1]);
   };
   const longConstant = (name: string): number => {
@@ -190,31 +190,129 @@ test("Artemis speaker holdback is derived from the video presentation budget", a
     assert.ok(match?.[1], `missing ${name}`);
     return Number(match[1].replaceAll("_", ""));
   };
+  const millisecondConstant = (name: string): number => {
+    const match = patch.match(
+      new RegExp(`${name} = (\\d+) \\* NANOS_PER_MILLISECOND;`, "u"),
+    );
+    assert.ok(match?.[1], `missing ${name}`);
+    return Number(match[1]);
+  };
 
-  const inputLeadMs = integerConstant("JMGO_VIDEO_INPUT_LEAD_MS");
-  const decodedImages = integerConstant("JMGO_VIDEO_DECODED_START_IMAGES");
-  const preparedImages = integerConstant("JMGO_VIDEO_PREPARED_START_IMAGES");
-  const framesPerSecond = integerConstant("JMGO_STREAM_FPS");
-  const presentationHandoffLeadNs = longConstant(
-    "JMGO_VIDEO_PRESENTATION_HANDOFF_LEAD_NS",
-  );
+  const inputLeadMs = millisecondConstant("VIDEO_INPUT_LEAD_NS");
+  const decodedImages = integerConstant("FALLBACK_DECODED_IMAGES");
+  const preparedImages = integerConstant("FALLBACK_PREPARED_IMAGES");
+  const framesPerSecond = integerConstant("STREAM_FRAMES_PER_SECOND");
+  const handoffLeadMs = millisecondConstant("PRESENTATION_HANDOFF_LEAD_NS");
   const nativeInputLeadMatch = nativePatch.match(/presentationLeadMs = (\d+);/u);
-  assert.ok(nativeInputLeadMatch, "missing native presentation lead");
+  assert.ok(nativeInputLeadMatch?.[1], "missing native presentation lead");
 
   assert.equal(inputLeadMs, Number(nativeInputLeadMatch[1]));
   assert.equal(decodedImages, integerConstant("DECODED_IMAGE_START_THRESHOLD"));
   assert.equal(preparedImages, integerConstant("PREPARED_IMAGE_QUEUE_LIMIT"));
-  assert.equal(presentationHandoffLeadNs, longConstant("PRESENTATION_HANDOFF_LEAD_NS"));
+  assert.equal(handoffLeadMs * 1_000_000, longConstant("PRESENTATION_HANDOFF_LEAD_NS"));
   assert.equal(
     inputLeadMs +
       ((decodedImages + preparedImages) * 1000) / framesPerSecond +
-      presentationHandoffLeadNs / 1_000_000,
+      handoffLeadMs,
     415,
+  );
+
+  assert.match(patch, /public final class JmgoAvSyncClock/u);
+  assert.match(
+    patch,
+    /long measuredHoldbackNs = VIDEO_INPUT_LEAD_NS \+\r?\n\+\s+presentationTargetNs - sourceTimestampNs;/u,
   );
   assert.match(
     patch,
-    /1_000_000_000L \/ JMGO_STREAM_FPS \+\r?\n\+\s+JMGO_VIDEO_PRESENTATION_HANDOFF_LEAD_NS;/u,
+    /preparedImage\.sourceTimestampNs,\r?\n\+\s+nextReleaseNs \+ PRESENTATION_HANDOFF_LEAD_NS/u,
   );
-  assert.match(patch, /JMGO_AUDIO_QUEUE_FRAMES = 128;/u);
-  assert.doesNotMatch(patch, /JMGO_AUDIO_SYNC_DELAY_NS = [\d_]+L/u);
+  assert.match(
+    patch,
+    /releaseTimeNs = nowNs \+ JmgoAvSyncClock\.getAudioHoldbackNs\(\)/u,
+  );
+  assert.match(
+    patch,
+    /frame\.releaseTimeNs = Math\.max\(releaseTimeNs, lastAudioReleaseTimeNs \+ 1\)/u,
+  );
+  assert.match(patch, /MAXIMUM_SCHEDULER_COMPENSATION_NS = 20 \*/u);
+  assert.equal(longConstant("PLAYBACK_SPEED_SCALE"), 1_000_000);
+  assert.equal(longConstant("MINIMUM_PLAYBACK_SPEED"), 980_000);
+  assert.equal(longConstant("MAXIMUM_PLAYBACK_SPEED"), 1_020_000);
+  assert.equal(longConstant("MAXIMUM_PLAYBACK_SPEED_STEP"), 500);
+  assert.equal(longConstant("PLAYBACK_SPEED_ERROR_DIVISOR"), 5_000);
+  assert.match(
+    patch,
+    /MINIMUM_AUDIO_ROUTE_ADJUSTMENT_NS =\r?\n\+\s+-2 \* NANOS_PER_SECOND/u,
+  );
+  assert.match(
+    patch,
+    /MAXIMUM_AUDIO_ROUTE_ADJUSTMENT_NS =\r?\n\+\s+2 \* NANOS_PER_SECOND/u,
+  );
+  assert.equal(millisecondConstant("VIDEO_REBASE_THRESHOLD_NS"), 100);
+  assert.equal(integerConstant("VIDEO_BASELINE_SAMPLES"), 60);
+  assert.equal(integerConstant("AUDIO_ROUTE_BASELINE_SAMPLES"), 64);
+  assert.match(patch, /JmgoAvSyncClock\.reportAudioWriterWake\(/u);
+  assert.match(patch, /track\.getTimestamp\(audioTimestamp\)/u);
+  assert.match(patch, /JmgoAvSyncClock\.updateAudioRouteLead\(/u);
+  assert.match(
+    patch,
+    /audioRouteBaselineSamples\.get\(\) >= AUDIO_ROUTE_BASELINE_SAMPLES/u,
+  );
+  assert.match(
+    patch,
+    /getAudioPlaybackSpeed\(long nowNs,\r?\n\+\s+boolean drainAudioQueue\)/u,
+  );
+  assert.match(patch, /if \(drainAudioQueue\) \{/u);
+  assert.match(patch, /desiredSpeed = MAXIMUM_PLAYBACK_SPEED;/u);
+  assert.match(
+    patch,
+    /return \(float\) speed \/ PLAYBACK_SPEED_SCALE/u,
+  );
+  assert.match(patch, /getCurrentAudioPlaybackSpeed\(\)/u);
+  assert.match(patch, /PlaybackParams\.AUDIO_FALLBACK_MODE_DEFAULT/u);
+  assert.match(patch, /\.setPitch\(1\.0f\)/u);
+  assert.match(patch, /\.setSpeed\(speed\)/u);
+  assert.match(
+    patch,
+    /long holdbackNs = BASELINE_HOLDBACK_NS - schedulerCompensationNs\.get\(\)/u,
+  );
+  assert.match(
+    patch,
+    /return videoHoldbackNs\.get\(\) - baselineHoldbackNs/u,
+  );
+  assert.match(
+    patch,
+    /measuredHoldbackNs \+ baselineHoldbackNs - previousHoldbackNs/u,
+  );
+  assert.match(patch, /if \(nowNs < nextReleaseNs\)/u);
+  assert.match(patch, /long schedulerDelayNs = nowNs - nextReleaseNs/u);
+  assert.match(patch, /JMGO_AUDIO_QUEUE_FRAMES = 256;/u);
+  assert.equal(integerConstant("JMGO_AUDIO_QUEUE_DRAIN_FRAMES"), 220);
+  assert.ok(
+    integerConstant("JMGO_AUDIO_QUEUE_DRAIN_FRAMES") <
+      integerConstant("JMGO_AUDIO_QUEUE_FRAMES"),
+  );
+  assert.match(patch, /audioPacketDurationNs = samplesPerFrame \* 1_000_000_000L/u);
+  assert.match(patch, /readyAudioFrames\.size\(\) \* audioPacketDurationNs/u);
+  assert.match(patch, /getAudioQueueLeadNs\(\)/u);
+  assert.match(patch, /getAudioRouteAdjustmentNs\(\)/u);
+  assert.match(
+    patch,
+    /readyAudioFrames\.size\(\) >= JMGO_AUDIO_QUEUE_DRAIN_FRAMES/u,
+  );
+  assert.equal(integerConstant("DECODED_IMAGE_QUEUE_OFFER_TIMEOUT_MS"), 20);
+  assert.match(
+    patch,
+    /decodedImageQueue\.offer\(image,\r?\n\+\s+DECODED_IMAGE_QUEUE_OFFER_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/u,
+  );
+  assert.match(
+    patch,
+    /decodedImageQueue\.size\(\) >= DECODED_IMAGE_QUEUE_LIMIT\) \{\r?\n\+\s+return;/u,
+  );
+  assert.doesNotMatch(patch, /Image oldest = decodedImageQueue\.poll\(\)/u);
+  assert.doesNotMatch(patch, /MINIMUM_SINK_ADJUSTMENT_NS|MAXIMUM_SINK_ADJUSTMENT_NS/u);
+  assert.doesNotMatch(patch, /JMGO_AUDIO_SYNC_DELAY_NS/u);
+  assert.doesNotMatch(patch, /reportAudioWriteCompletion/u);
+  assert.doesNotMatch(patch, /VIDEO_DISCONTINUITY_NS/u);
+  assert.doesNotMatch(patch, /adjustedReleaseNs|presentationAdjustmentNs/u);
 });

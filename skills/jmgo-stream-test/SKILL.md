@@ -33,9 +33,9 @@ Defaults:
 - quiet 48 kHz stereo PCM tone
 - package `com.limelight.noirdebug`
 - motion source placed on Sunshine’s configured `output_name` display (override with `--monitor ID`)
-- strict acceptance: every interval 15–18 ms, no interval ≥34 ms, no compositor drops, and no known pipeline fault
+- strict acceptance: every interval 15–18 ms, no interval ≥34 ms, no compositor drops, no known pipeline fault, and—on audio runs of at least 20 seconds—no route divergence, persistent speed saturation, pressure drain, or near-capacity PCM queue
 
-Before timing, the script resolves the selected CoreGraphics display, creates a dedicated Safari window, verifies its motion-asset URL, and moves that exact window wholly onto the display. Cleanup closes only the tracked test window. This is mandatory when Sunshine captures a virtual display; motion or tab changes on the Mac’s main display do not exercise the streamed pixels. It then force-stops `com.jmgo.setting.x`, whose background Wi-Fi scan caused a measured 450 ms outage. It then performs **no ADB work during the timed sleep**. Do not reopen projector Settings or add `top`, screenshots, log polling, or progress probes in the measurement window; either can perturb the same projector Wi-Fi path.
+Before timing, the script records the frontmost application, resolves the selected CoreGraphics display, creates a dedicated Safari window, immediately restores the prior application after each required Safari activation, verifies the motion-asset URL, and moves that exact window wholly onto the display. Cleanup closes only the tracked test window. This is mandatory when Sunshine captures a virtual display; motion or tab changes on the Mac’s main display do not exercise the streamed pixels. It then force-stops `com.jmgo.setting.x`, whose background Wi-Fi scan caused a measured 450 ms outage. It then performs **no ADB work during the timed sleep**. Do not reopen projector Settings or add `top`, screenshots, log polling, or progress probes in the measurement window; either can perturb the same projector Wi-Fi path.
 
 ## Assets
 
@@ -54,7 +54,7 @@ A passing build must show zero:
 - decoded image queue replacements
 - decoded image-ring empties or timer delays
 - ImageReader/ImageWriter faults
-- audio queue drops, write failures, or legacy backlogs
+- audio queue drops, write failures, legacy backlogs, route/video tail error above 75 ms, persistent ±2% speed saturation, pressure-drain activation, or queued audio reaching 1,100 ms
 - projector `WifiTracker` scans during the timed window
 - SurfaceFlinger dropped, late-acquire, or bad-desired-present frames
 

@@ -37,11 +37,11 @@ if [[ "$actual_artemis" != "$expected_artemis" || "$actual_common_c" != "$expect
   exit 1
 fi
 
-git -C "$work_dir" apply --check "$script_dir/artemis-v20.2.6.patch"
-git -C "$work_dir" apply "$script_dir/artemis-v20.2.6.patch"
+git -C "$work_dir" -c core.whitespace=cr-at-eol apply --check "$script_dir/artemis-v20.2.6.patch"
+git -C "$work_dir" -c core.whitespace=cr-at-eol apply "$script_dir/artemis-v20.2.6.patch"
 
-git -C "$common_c" apply --check "$script_dir/moonlight-common-c.patch"
-git -C "$common_c" apply "$script_dir/moonlight-common-c.patch"
+git -C "$common_c" -c core.whitespace=cr-at-eol apply --check "$script_dir/moonlight-common-c.patch"
+git -C "$common_c" -c core.whitespace=cr-at-eol apply "$script_dir/moonlight-common-c.patch"
 
 (
   cd "$work_dir"
