@@ -25,7 +25,7 @@ A release is complete only when all checks pass:
 5. Run `pnpm simulate:avsync`, then `jmgo-stream-test --host HOST --monitor 4 --duration 20 --focus-mode interactive` for fast coexistence feedback and `--duration 60` for the ordinary hardware gate. Certify the final candidate with one idle `--duration 300 --focus-mode controlled` soak. Interactive mode restores the prior app but still rejects source throttling; controlled mode leaves Safari foreground, requires it at both timed boundaries, and rejects reported blur or hidden events. Both restore the original app during cleanup.
 6. Do nothing else during the definitive controlled five-minute sleep. An interactive-machine pass is a separate stress test because foreground applications share WindowServer, GPU, capture, encoder, and network resources; it cannot be relabeled as controlled certification.
 7. Treat any long gap or fault event as failure; inspect timestamps before rerunning.
-8. Use `--screenshot /tmp/result.png` only after timing.
+8. Use `--screenshot /tmp/result.png` only after timing. If an already-idle Desktop stream appears frozen, make the view static and run `jmgo-stream-test freeze-report --host HOST --monitor 4` once before restarting anything.
 
 ## Why SurfaceFlinger
 
@@ -34,6 +34,10 @@ The rendered layer's present-to-present histogram observes what actually reaches
 ```text
 SurfaceView - com.limelight.noirdebug/com.limelight.Game#0
 ```
+
+## Long-idle freeze report
+
+`freeze-report` does not open Safari or alter the desktop. It waits two seconds, captures the configured CoreGraphics display and one projector compositor PNG, compares them at projector resolution, samples the preceding three minutes of macOS VideoToolbox rates from unified logging, emits only sanitized metrics, and deletes both images. Use it only on a settled desktop: motion between the host capture and the slower ADB screencap can create a false mismatch. A view SSIM of at least 0.90 is calibrated as matching; `downstream-view-stale` requires both a mismatch and healthy ≥50 FPS host capture with a significant bitrate excursion. One ADB screencap is intrusive and cannot be used as cadence evidence.
 
 ## Diagnostic patterns
 

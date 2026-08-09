@@ -10,9 +10,18 @@ done
 script_dir="$(cd "$(dirname "$source_path")" && pwd)"
 skill_dir="$(dirname "$script_dir")"
 
+if [ "${1:-}" = "freeze-report" ]; then
+  shift
+  exec "$script_dir/freeze-report" "$@"
+fi
+
 usage() {
   cat <<'EOF'
 Usage: jmgo-stream-test [--host HOST | --serial HOST:PORT] [options]
+       jmgo-stream-test freeze-report [--host HOST | --serial HOST:PORT] [--monitor ID]
+
+Commands:
+  freeze-report        Compare settled host/projector pixels without changing the display
 
 Options:
   --duration SECONDS   Timed run, default 60 (5-600)

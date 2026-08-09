@@ -19,6 +19,13 @@ const motionParser = join(
   "scripts",
   "parse-motion-source.mjs",
 );
+const freezeParser = join(
+  process.cwd(),
+  "skills",
+  "jmgo-stream-test",
+  "scripts",
+  "parse-freeze-report.mjs",
+);
 
 function telemetry(
   queuedAudioMs: number,
@@ -228,4 +235,80 @@ test("motion parser separates healthy interaction from focus loss and rAF thrott
     JSON.parse(throttled.stdout).failureReasons.includes("source-gap-at-least-34-ms"),
   );
   assert.equal(JSON.parse(throttled.stdout).passed, false);
+});
+
+test("freeze report separates synchronized and stale host/client views", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jmgo-freeze-report-test-"));
+  try {
+    const healthyPath = join(directory, "healthy.log");
+    const lines = [
+      ["03:00:00.000", 60, 60, 60, 600_000],
+      ["03:00:01.000", 60, 61, 60, 700_000],
+      ["03:00:02.000", 61, 60, 61, 4_000_000],
+      ["03:00:03.000", 59, 59, 59, 900_000],
+      ["03:00:04.000", 60, 60, 60, 650_000],
+    ].map(
+      ([time, input, encode, transmit, bitrate]) =>
+        [
+          `2026-08-10 ${time} Df Sunshine[123:456]`,
+          `input_fps=${input}, enc_fps=${encode}, tx_fps=${transmit}, idr_fps=0.00,`,
+          `bit_rate (video/target)=-1/-1, ${bitrate}/14988000`,
+        ].join(" "),
+    );
+    await writeFile(healthyPath, lines.join("\n"));
+    const capturedAt = new Date("2026-08-10T03:00:05").getTime().toString();
+    const synchronized = spawnSync(
+      process.execPath,
+      [freezeParser, healthyPath, "0.959225", capturedAt],
+      { encoding: "utf8" },
+    );
+    assert.equal(synchronized.status, 0, synchronized.stderr);
+    assert.deepEqual(JSON.parse(synchronized.stdout), {
+      available: true,
+      samples: 5,
+      observedSeconds: 4,
+      minimumInputFPS: 59,
+      averageInputFPS: 60,
+      averageEncodeFPS: 60,
+      averageTransmitFPS: 60,
+      maximumLogGapMs: 1000,
+      finalSampleStaleMs: 1000,
+      minimumBitrate: 600000,
+      maximumBitrate: 4000000,
+      contentChangeObserved: true,
+      captureHealthy: true,
+      viewSSIM: 0.959,
+      viewMatch: true,
+      classification: "views-synchronized",
+      passed: true,
+    });
+
+    const stale = spawnSync(
+      process.execPath,
+      [freezeParser, healthyPath, "0.4", capturedAt],
+      { encoding: "utf8" },
+    );
+    assert.equal(stale.status, 1);
+    assert.equal(JSON.parse(stale.stdout).classification, "downstream-view-stale");
+
+    const unhealthyPath = join(directory, "unhealthy.log");
+    await writeFile(
+      unhealthyPath,
+      lines
+        .map((line) => line.replace(/input_fps=(?:59|60|61)/u, "input_fps=30"))
+        .join("\n"),
+    );
+    const unhealthy = spawnSync(
+      process.execPath,
+      [freezeParser, unhealthyPath, "0.4", capturedAt],
+      { encoding: "utf8" },
+    );
+    assert.equal(unhealthy.status, 1);
+    assert.equal(
+      JSON.parse(unhealthy.stdout).classification,
+      "host-capture-unhealthy-or-unobserved",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

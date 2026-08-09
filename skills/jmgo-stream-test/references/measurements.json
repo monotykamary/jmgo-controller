@@ -450,5 +450,26 @@
     "compositorMaximumIntervalMs": 17,
     "pipelineFaults": 0,
     "expectedResult": "rejected-source-focus-interference-despite-perfect-compositor"
+  },
+  "longIdleFreezeForensics": {
+    "reportedSymptom": "projector view stopped reflecting moved host windows after static idle",
+    "restartOccurredBeforeProjectorCapture": true,
+    "preRestartHostSessionSeconds": 1392,
+    "preRestartVideoToolboxSamples": 1393,
+    "preRestartMinimumInputFPS": 53.22,
+    "preRestartInputSamplesBelow40FPS": 0,
+    "preRestartMaximumTelemetryGapMs": 1035,
+    "preRestartMaximumChangeBitrate": 7473984,
+    "hostCaptureFallbackObserved": false,
+    "preRestartClassification": "host-capture-and-encode-live-downstream-boundary-suspected",
+    "recoveredStaticIdleMinutesBeforePulse": 12,
+    "recoveredPulseVisible": true,
+    "recoveredPulseMaximumBitrate": 4922283,
+    "nonvisualHostProjectorSSIM": 0.959,
+    "nonvisualHostSamples": 180,
+    "nonvisualAverageInputFPS": 60.111,
+    "nonvisualMaximumTelemetryGapMs": 1006,
+    "nonvisualClassification": "views-synchronized",
+    "remainingBoundary": "UDP delivery versus client depacketization, decode, or presentation"
   }
 }

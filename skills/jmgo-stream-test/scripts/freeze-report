@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+  source_dir="$(cd "$(dirname "$source_path")" && pwd)"
+  target="$(readlink "$source_path")"
+  case "$target" in /*) source_path="$target" ;; *) source_path="$source_dir/$target" ;; esac
+done
+script_dir="$(cd "$(dirname "$source_path")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: jmgo-stream-test freeze-report [--host HOST | --serial HOST:PORT] [--monitor ID]
+
+Compare the settled host display with one projector compositor screenshot and
+correlate the result with recent VideoToolbox rates. Run only after observing a
+freeze and before restarting Artemis or Sunshine. This performs one intrusive
+ADB screencap, creates no windows, changes no pixels, and deletes both images.
+EOF
+}
+
+host=""
+serial=""
+monitor=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --host) host="${2:?--host requires a value}"; shift 2 ;;
+    --serial) serial="${2:?--serial requires a value}"; shift 2 ;;
+    --monitor) monitor="${2:?--monitor requires a value}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown freeze-report option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+for command in adb ffmpeg ffprobe node screencapture xcrun; do
+  command -v "$command" >/dev/null 2>&1 || { echo "$command is required" >&2; exit 127; }
+done
+if [ -z "$serial" ]; then
+  if [ -z "$host" ]; then host="${JMGO_HOST:-}"; fi
+  if [ -z "$host" ] && command -v jmgo >/dev/null 2>&1; then host="$(jmgo host show 2>/dev/null || true)"; fi
+  if [ -z "$host" ] || [ "$host" = "not set" ]; then
+    echo "projector host required via --host, --serial, JMGO_HOST, or jmgo host set" >&2
+    exit 2
+  fi
+  case "$host" in *:*) serial="$host" ;; *) serial="$host:5555" ;; esac
+fi
+if [ -z "$monitor" ]; then
+  sunshine_config="${SUNSHINE_CONFIG_FILE:-$HOME/.config/sunshine/sunshine.conf}"
+  if [ -f "$sunshine_config" ]; then
+    monitor="$(sed -nE 's/^[[:space:]]*output_name[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' "$sunshine_config" | tail -1)"
+  fi
+fi
+if [ -z "$monitor" ]; then monitor="primary"; fi
+
+display_info="$(xcrun swift "$script_dir/display-bounds.swift" "$monitor")"
+IFS=, read -r display_id display_x display_y display_width display_height <<< "$display_info"
+work="$(mktemp -d "${TMPDIR:-/tmp}/jmgo-freeze-report.XXXXXX")"
+trap 'rm -rf "$work"' EXIT INT TERM
+
+adb connect "$serial" >/dev/null
+sleep 2
+screencapture -x -R"$display_x,$display_y,$display_width,$display_height" "$work/host.png"
+adb -s "$serial" exec-out screencap -p > "$work/client.raw"
+node -e 'const fs=require("fs");const b=fs.readFileSync(process.argv[1]);const s=Buffer.from([0x89,0x50,0x4e,0x47,13,10,26,10]);const i=b.indexOf(s);if(i<0)throw Error("PNG signature missing");fs.writeFileSync(process.argv[2],b.subarray(i));' "$work/client.raw" "$work/client.png"
+client_size="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$work/client.png")"
+case "$client_size" in *x*) ;; *) echo "unable to determine projector screenshot size" >&2; exit 1 ;; esac
+IFS=x read -r client_width client_height <<< "$client_size"
+ffmpeg -hide_banner -loglevel error -i "$work/host.png" -vf "scale=$client_width:$client_height:flags=lanczos" -frames:v 1 "$work/host-scaled.png"
+ssim_line="$(ffmpeg -hide_banner -loglevel info -i "$work/host-scaled.png" -i "$work/client.png" -lavfi ssim -f null - 2>&1 | grep 'SSIM' | tail -1)"
+view_ssim="$(printf '%s\n' "$ssim_line" | sed -nE 's/.* All:([0-9.-]+) .*/\1/p')"
+[ -n "$view_ssim" ] || { echo "unable to compare host and projector screenshots" >&2; exit 1; }
+
+sunshine_pid="$(pgrep -f '^/Applications/Sunshine JMGO[.]app/Contents/MacOS/Sunshine$' | tail -1 || true)"
+if [ -z "$sunshine_pid" ]; then sunshine_pid="$(pgrep -x Sunshine | tail -1 || true)"; fi
+: > "$work/vcp.log"
+if [ -n "$sunshine_pid" ]; then
+  /usr/bin/log show --style compact --last 3m --predicate "processIdentifier == $sunshine_pid" 2>/dev/null |
+    grep 'VCPRateControlSession' > "$work/vcp.log" || true
+fi
+captured_at="$(node -e 'console.log(Date.now())')"
+set +e
+result="$(node "$script_dir/parse-freeze-report.mjs" "$work/vcp.log" "$view_ssim" "$captured_at")"
+result_rc=$?
+set -e
+printf '%s\n' "$result"
+echo "Private host and projector screenshots deleted." >&2
+exit "$result_rc"

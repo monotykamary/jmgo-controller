@@ -25,6 +25,7 @@ jmgo-stream-test --host PROJECTOR_HOST --duration 60
 jmgo-stream-test --host PROJECTOR_HOST --monitor 4 --duration 300 --focus-mode controlled
 jmgo-stream-test --serial PROJECTOR_HOST:5555 --no-audio
 jmgo-stream-test --host PROJECTOR_HOST --screenshot /tmp/jmgo-result.png
+jmgo-stream-test freeze-report --host PROJECTOR_HOST --monitor 4
 ```
 
 Defaults:
@@ -37,6 +38,8 @@ Defaults:
 - interactive focus mode, which immediately restores the previously active application
 - source acceptance from before/after Safari rAF counters: 55–65 FPS, 90–110% timed-span coverage, no ≥34 ms source gap, and a title no more than 500 ms stale
 - strict acceptance: every interval 15–18 ms, no interval ≥34 ms, no compositor drops, no known pipeline fault, and—on audio runs of at least 20 seconds—no route divergence, persistent speed saturation, pressure drain, or near-capacity PCM queue
+
+When an existing Desktop stream appears frozen, stop changing its pixels and run `freeze-report` **before any restart**. It creates no window and changes no pixels. After a two-second settle it privately captures the selected host display and one projector compositor frame, scales them, classifies SSIM ≥0.90 as matching, correlates three minutes of VideoToolbox input/encode/transmit rates, and deletes both images. The single ADB screencap is intrusive, so this is one-shot failure forensics rather than cadence evidence. `downstream-view-stale` means the host encoder observed a significant content change while the projector retained different pixels.
 
 Before timing, the script records the frontmost application, resolves the selected CoreGraphics display, creates a dedicated Safari window, verifies the motion-asset URL, and moves that exact window wholly onto the display. `--focus-mode interactive` immediately restores the prior application and independently requires healthy source rAF. `--focus-mode controlled` keeps Safari foreground, requires Safari to be frontmost at both timed boundaries, and rejects reported blur or hidden events; cleanup restores the original application in either mode. A one-second SurfaceFlinger preflight rejects stale Game activities before the real timer. Cleanup closes only the tracked test window. This is mandatory when Sunshine captures a virtual display; motion or tab changes on the Mac’s main display do not exercise the streamed pixels. It then force-stops `com.jmgo.setting.x`, whose background Wi-Fi scan caused a measured 450 ms outage. It then performs **no ADB work during the timed sleep**. Do not reopen projector Settings or add `top`, screenshots, log polling, or progress probes in the measurement window; either can perturb the same projector Wi-Fi path.
 
