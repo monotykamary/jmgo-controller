@@ -21,7 +21,15 @@ export {
   updateSunshineMinimumFpsConfig,
   updateSunshineMonitorConfig,
 } from "./artemis.js";
-export { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";
+export {
+  clearSavedHost,
+  clearSavedSunshineApp,
+  configPath,
+  loadSavedHost,
+  loadSavedSunshineApp,
+  saveHost,
+  saveSunshineApp,
+} from "./config.js";
 export { discover } from "./discovery.js";
 export { installFromPlay, PlayError, verifyApkSigners } from "./play.js";
 export {

@@ -19,24 +19,37 @@ function validateHost(host: unknown): string {
   return host;
 }
 
-export async function loadSavedHost(path = configPath()): Promise<string | undefined> {
+function validateSunshineApp(app: unknown): string {
+  if (typeof app !== "string" || app.trim().length === 0 || /[\u0000-\u001f\u007f]/.test(app)) {
+    throw new Error("saved Sunshine app is invalid");
+  }
+  return app.trim();
+}
+
+async function loadConfig(path: string): Promise<Record<string, unknown>> {
   try {
-    const config = JSON.parse(await readFile(path, "utf8")) as { host?: unknown };
-    return config.host === undefined ? undefined : validateHost(config.host);
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
     if (error instanceof SyntaxError) throw new Error(`invalid JMGO config file: ${path}`, { cause: error });
     throw error;
   }
 }
 
-export async function saveHost(host: string, path = configPath()): Promise<void> {
-  const validated = validateHost(host);
+async function writeConfig(config: Record<string, unknown>, path: string): Promise<void> {
+  if (Object.keys(config).length === 0) {
+    await unlink(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    return;
+  }
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify({ host: validated }, null, 2)}\n`, {
+    await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
@@ -49,8 +62,38 @@ export async function saveHost(host: string, path = configPath()): Promise<void>
   }
 }
 
+async function setConfigKey(key: string, value: string, path: string): Promise<void> {
+  await writeConfig({ ...(await loadConfig(path)), [key]: value }, path);
+}
+
+async function clearConfigKey(key: string, path: string): Promise<void> {
+  const config = await loadConfig(path);
+  delete config[key];
+  await writeConfig(config, path);
+}
+
+export async function loadSavedHost(path = configPath()): Promise<string | undefined> {
+  const host = (await loadConfig(path)).host;
+  return host === undefined ? undefined : validateHost(host);
+}
+
+export async function saveHost(host: string, path = configPath()): Promise<void> {
+  await setConfigKey("host", validateHost(host), path);
+}
+
 export async function clearSavedHost(path = configPath()): Promise<void> {
-  await unlink(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT") throw error;
-  });
+  await clearConfigKey("host", path);
+}
+
+export async function loadSavedSunshineApp(path = configPath()): Promise<string | undefined> {
+  const app = (await loadConfig(path)).sunshineApp;
+  return app === undefined ? undefined : validateSunshineApp(app);
+}
+
+export async function saveSunshineApp(app: string, path = configPath()): Promise<void> {
+  await setConfigKey("sunshineApp", validateSunshineApp(app), path);
+}
+
+export async function clearSavedSunshineApp(path = configPath()): Promise<void> {
+  await clearConfigKey("sunshineApp", path);
 }

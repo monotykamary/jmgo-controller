@@ -82,9 +82,13 @@ const artemisOpenOptions: readonly OptionSpec[] = [
   {
     long: "--app",
     valueName: "INDEX|NAME",
-    description: "launch straight into this Sunshine app and wait for the stream",
+    description: "launch straight into this Sunshine app, remembering it as the default",
   },
   { long: "--pc", valueName: "NAME", description: "Sunshine host name to pair with --app" },
+  {
+    long: "--no-app",
+    description: "skip the remembered default app for this launch",
+  },
   {
     long: "--no-restart",
     description: "skip the Sunshine restart that clears orphaned sessions",
@@ -246,7 +250,7 @@ export const commandSpec: CommandSpec = {
     {
       name: "artemis",
       summary: "open JMGO Artemis Lab, optionally straight into a Sunshine stream",
-      description: "Defaults to open. --monitor and --minimum-fps are persisted into sunshine.conf and require a Sunshine restart.",
+      description: "Defaults to open. --monitor and --minimum-fps are persisted into sunshine.conf and require a Sunshine restart. --app is remembered as the default app; --no-app skips it once.",
       options: artemisOpenOptions,
       positionals: [],
       subcommands: [
@@ -259,7 +263,7 @@ export const commandSpec: CommandSpec = {
         },
         {
           name: "apps",
-          summary: "list Sunshine apps configured on this Mac",
+          summary: "list Sunshine apps configured on this Mac, marking the selected one",
           options: [jsonOption],
           positionals: [],
           subcommands: [],

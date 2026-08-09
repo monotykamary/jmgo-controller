@@ -149,7 +149,7 @@ jmgo artemis --monitor 7
 jmgo artemis --monitor "Studio Display"
 ```
 
-List Sunshine application entries and directly start one by one-based index or exact name:
+List Sunshine application entries, marking the remembered default, and directly start one by one-based index or exact name:
 
 ```bash
 jmgo artemis apps
@@ -158,13 +158,17 @@ jmgo artemis --app 1
 jmgo artemis --app "Desktop"
 jmgo artemis --monitor primary --app "Steam Big Picture"
 
+# The last --app is remembered as the default, so later runs can omit it
+jmgo artemis open
+jmgo artemis open --no-app # skip the default for this launch
+
 # Persist the smooth 1080p60 Sunshine profile and launch directly
 jmgo artemis --minimum-fps 30 --monitor 4 --app "Desktop"
 ```
 
 The app listing reads `apps.json` but emits only indexes and names—never commands, environment variables, or preparation scripts. Direct launch uses Artemis's shortcut activity and the paired Sunshine name. Pass `--pc "NAME"` only when the paired client name differs from `sunshine_name` or the local hostname. A newly added Sunshine entry may require opening that host once in Artemis to refresh its app cache.
 
-Selecting an application asks Sunshine to launch one configured application entry; Sunshine still captures the selected monitor rather than isolating an individual macOS window.
+Selecting an application asks Sunshine to launch one configured application entry; Sunshine still captures the selected monitor rather than isolating an individual macOS window. Passing `--app` also saves the resolved app name in the jmgo config as the default for bare `jmgo artemis open` runs; `--no-app` skips it once, and if the remembered name no longer exists in `apps.json` the command notes that and opens Artemis plainly.
 
 By default the command updates Sunshine's `output_name` and `minimum_fps_target` only when requested, restarts Sunshine, stops the JMGO Settings process that otherwise performs disruptive Wi-Fi scans, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab or the selected application directly. It automatically prefers `/Applications/Sunshine JMGO.app` when installed; set `JMGO_SUNSHINE_APP` to override it. Restarting first clears orphaned sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor` or `--minimum-fps`.
 

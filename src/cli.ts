@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Adb } from "./adb.js";
 import {
   ARTEMIS_PACKAGE,
+  ArtemisError,
   JMGO_SETTINGS_PACKAGE,
   buildArtemisAppLaunchCommand,
   listMonitors,
@@ -15,8 +16,16 @@ import {
   restartSunshine,
   saveSunshineMinimumFps,
   saveSunshineMonitor,
+  type SunshineApp,
 } from "./artemis.js";
-import { clearSavedHost, configPath, loadSavedHost, saveHost } from "./config.js";
+import {
+  clearSavedHost,
+  configPath,
+  loadSavedHost,
+  loadSavedSunshineApp,
+  saveHost,
+  saveSunshineApp,
+} from "./config.js";
 import { discover } from "./discovery.js";
 import { installFromPlay } from "./play.js";
 import { findExecutable, runProcess } from "./process.js";
@@ -147,9 +156,15 @@ async function artemisCommand(args: string[]): Promise<void> {
   if (action === "apps") {
     const json = takeFlag(args, "--json");
     if (args.length > 0) throw new Error(`unknown artemis apps option: ${args[0]}`);
-    const apps = await listSunshineApps();
-    if (json) console.log(JSON.stringify(apps, null, 2));
-    else for (const app of apps) console.log(`${app.index} · ${app.name}`);
+    const [apps, savedApp] = await Promise.all([listSunshineApps(), loadSavedSunshineApp()]);
+    const output = apps.map((app) => ({
+      ...app,
+      selected: savedApp !== undefined && app.name.toLowerCase() === savedApp.toLowerCase(),
+    }));
+    if (json) console.log(JSON.stringify(output, null, 2));
+    else {
+      for (const app of output) console.log(`${app.selected ? "*" : " "} ${app.index} · ${app.name}`);
+    }
     return;
   }
   if (action === "monitors") {
@@ -175,6 +190,7 @@ async function artemisCommand(args: string[]): Promise<void> {
   const minimumFpsOption = takeOption(args, "--minimum-fps");
   const appSelector = takeOption(args, "--app");
   const computerSelector = takeOption(args, "--pc");
+  const noApp = takeFlag(args, "--no-app");
   const noRestart = takeFlag(args, "--no-restart");
   const host = await hostFrom(args);
   if (args.length > 0) throw new Error(`unknown artemis option: ${args[0]}`);
@@ -185,11 +201,26 @@ async function artemisCommand(args: string[]): Promise<void> {
   if (minimumFps !== undefined && (!Number.isInteger(minimumFps) || minimumFps < 0 || minimumFps > 240)) {
     throw new Error("--minimum-fps must be an integer from 0 through 240");
   }
-  if (computerSelector && !appSelector) throw new Error("--pc requires --app");
+  if (appSelector && noApp) throw new Error("choose --app or --no-app, not both");
 
-  const selectedApp = appSelector
-    ? resolveSunshineApp(await listSunshineApps(), appSelector)
-    : undefined;
+  let selectedApp: SunshineApp | undefined;
+  if (appSelector) {
+    selectedApp = resolveSunshineApp(await listSunshineApps(), appSelector);
+    await saveSunshineApp(selectedApp.name);
+  } else if (!noApp) {
+    const savedApp = await loadSavedSunshineApp();
+    if (savedApp !== undefined) {
+      try {
+        selectedApp = resolveSunshineApp(await listSunshineApps(), savedApp);
+      } catch (error) {
+        if (!(error instanceof ArtemisError)) throw error;
+        console.log(
+          `saved default Sunshine app ${JSON.stringify(savedApp)} is unavailable: ${error.message}`,
+        );
+      }
+    }
+  }
+  if (computerSelector && !selectedApp) throw new Error("--pc requires --app");
   let selectedMonitor: string | undefined;
   if (monitorSelector) {
     const monitor = resolveMonitor(await listMonitors(), monitorSelector);
