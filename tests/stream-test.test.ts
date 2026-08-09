@@ -5,12 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-const parser = join(
+const avsyncParser = join(
   process.cwd(),
   "skills",
   "jmgo-stream-test",
   "scripts",
   "parse-avsync-log.mjs",
+);
+const motionParser = join(
+  process.cwd(),
+  "skills",
+  "jmgo-stream-test",
+  "scripts",
+  "parse-motion-source.mjs",
 );
 
 function telemetry(
@@ -43,7 +50,7 @@ test("A/V telemetry parser accepts convergence and rejects saturation", async ()
         telemetry(515, 120, false, 128, 1.0004),
       ].join("\n"),
     );
-    const converged = spawnSync(process.execPath, [parser, convergedPath], {
+    const converged = spawnSync(process.execPath, [avsyncParser, convergedPath], {
       encoding: "utf8",
     });
     assert.equal(converged.status, 0, converged.stderr);
@@ -55,6 +62,7 @@ test("A/V telemetry parser accepts convergence and rejects saturation", async ()
       tailMaximumPhaseErrorMs: 20,
       tailSpeedSaturated: false,
       queueDrainSamples: 0,
+      failureReasons: [],
       passed: true,
     });
 
@@ -67,7 +75,7 @@ test("A/V telemetry parser accepts convergence and rejects saturation", async ()
         telemetry(1_270, 150, true, 404, 0.98),
       ].join("\n"),
     );
-    const saturated = spawnSync(process.execPath, [parser, saturatedPath], {
+    const saturated = spawnSync(process.execPath, [avsyncParser, saturatedPath], {
       encoding: "utf8",
     });
     assert.equal(saturated.status, 1);
@@ -79,9 +87,145 @@ test("A/V telemetry parser accepts convergence and rejects saturation", async ()
       tailMaximumPhaseErrorMs: 254,
       tailSpeedSaturated: true,
       queueDrainSamples: 3,
+      failureReasons: [
+        "audio-queue-drain-active",
+        "audio-queue-near-capacity",
+        "audio-route-divergence",
+        "audio-speed-saturated",
+      ],
       passed: false,
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+function motionTitle({
+  frame,
+  elapsedMs,
+  maximumGapMs = 16.8,
+  gapEvents34Ms = 0,
+  focusLossEvents = 0,
+  hiddenEvents = 0,
+  lastEpochMs,
+}: {
+  frame: number;
+  elapsedMs: number;
+  maximumGapMs?: number;
+  gapEvents34Ms?: number;
+  focusLossEvents?: number;
+  hiddenEvents?: number;
+  lastEpochMs: number;
+}): string {
+  return [
+    `JMGO_MOTION frame=${frame}`,
+    `elapsedMs=${elapsedMs}`,
+    `maxGapMs=${maximumGapMs}`,
+    `gaps34=${gapEvents34Ms}`,
+    `blurs=${focusLossEvents}`,
+    `hidden=${hiddenEvents}`,
+    `lastEpochMs=${lastEpochMs}`,
+  ].join(" ");
+}
+
+function runMotionParser(
+  startTitle: string,
+  endTitle: string,
+  focusMode: "interactive" | "controlled",
+  focusEndApp = focusMode === "controlled" ? "Safari" : "Dia",
+) {
+  const focusStartApp = focusMode === "controlled" ? "Safari" : "Dia";
+  return spawnSync(
+    process.execPath,
+    [
+      motionParser,
+      startTitle,
+      endTitle,
+      "10230100",
+      focusMode,
+      "20",
+      focusStartApp,
+      focusEndApp,
+    ],
+    { encoding: "utf8" },
+  );
+}
+
+test("motion parser separates healthy interaction from focus loss and rAF throttling", () => {
+  const start = motionTitle({
+    frame: 180,
+    elapsedMs: 3000,
+    focusLossEvents: 1,
+    lastEpochMs: 10203000,
+  });
+  const healthyEnd = motionTitle({
+    frame: 1380,
+    elapsedMs: 23000,
+    focusLossEvents: 1,
+    lastEpochMs: 10230000,
+  });
+  const healthy = runMotionParser(start, healthyEnd, "interactive");
+  assert.equal(healthy.status, 0, healthy.stderr);
+  assert.deepEqual(JSON.parse(healthy.stdout), {
+    available: true,
+    focusMode: "interactive",
+    focusStartApp: "Dia",
+    focusEndApp: "Dia",
+    frames: 1200,
+    elapsedMs: 20000,
+    coveragePercent: 100,
+    averageFPS: 60,
+    gapEvents34Ms: 0,
+    focusLossEvents: 0,
+    hiddenEvents: 0,
+    sourceStaleMs: 100,
+    reportedMaximumGapMs: 16.8,
+    failureReasons: [],
+    passed: true,
+  });
+
+  const controlledStart = motionTitle({
+    frame: 180,
+    elapsedMs: 3000,
+    lastEpochMs: 10203000,
+  });
+  const focusLostEnd = motionTitle({
+    frame: 1380,
+    elapsedMs: 23000,
+    focusLossEvents: 1,
+    lastEpochMs: 10230000,
+  });
+  const focusLost = runMotionParser(controlledStart, focusLostEnd, "controlled");
+  assert.equal(focusLost.status, 1);
+  assert.equal(JSON.parse(focusLost.stdout).focusLossEvents, 1);
+  assert.ok(JSON.parse(focusLost.stdout).failureReasons.includes("controlled-focus-event"));
+  assert.equal(JSON.parse(focusLost.stdout).passed, false);
+
+  const wrongFocus = runMotionParser(controlledStart, healthyEnd, "controlled", "Dia");
+  assert.equal(wrongFocus.status, 1);
+  assert.equal(JSON.parse(wrongFocus.stdout).focusEndApp, "Dia");
+  assert.ok(
+    JSON.parse(wrongFocus.stdout).failureReasons.includes("controlled-focus-boundary"),
+  );
+  assert.equal(JSON.parse(wrongFocus.stdout).passed, false);
+
+  const throttledEnd = motionTitle({
+    frame: 200,
+    elapsedMs: 23000,
+    maximumGapMs: 1000,
+    gapEvents34Ms: 19,
+    focusLossEvents: 1,
+    lastEpochMs: 10230000,
+  });
+  const throttled = runMotionParser(start, throttledEnd, "interactive");
+  assert.equal(throttled.status, 1);
+  assert.equal(JSON.parse(throttled.stdout).averageFPS, 1);
+  assert.equal(JSON.parse(throttled.stdout).gapEvents34Ms, 19);
+  assert.ok(
+    JSON.parse(throttled.stdout).failureReasons.includes("source-rate-outside-55-65-fps"),
+  );
+  assert.ok(
+    JSON.parse(throttled.stdout).failureReasons.includes("source-gap-at-least-34-ms"),
+  );
+  assert.equal(JSON.parse(throttled.stdout).passed, false);
 });

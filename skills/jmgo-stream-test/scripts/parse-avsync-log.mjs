@@ -47,11 +47,12 @@ export function analyzeAvSyncLog(text) {
   const queueGrowthMs =
     mean(tail.map((sample) => sample.queuedAudioMs)) -
     mean(first.map((sample) => sample.queuedAudioMs));
-  const passed =
-    queueDrainSamples === 0 &&
-    maximumQueuedAudioMs < 1_100 &&
-    tailMaximumPhaseErrorMs <= 75 &&
-    !tailSpeedSaturated;
+  const failureReasons = [];
+  if (queueDrainSamples !== 0) failureReasons.push("audio-queue-drain-active");
+  if (maximumQueuedAudioMs >= 1_100) failureReasons.push("audio-queue-near-capacity");
+  if (tailMaximumPhaseErrorMs > 75) failureReasons.push("audio-route-divergence");
+  if (tailSpeedSaturated) failureReasons.push("audio-speed-saturated");
+  const passed = failureReasons.length === 0;
 
   return {
     available: true,
@@ -61,6 +62,7 @@ export function analyzeAvSyncLog(text) {
     tailMaximumPhaseErrorMs,
     tailSpeedSaturated,
     queueDrainSamples,
+    failureReasons,
     passed,
   };
 }

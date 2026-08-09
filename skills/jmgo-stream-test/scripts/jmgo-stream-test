@@ -19,6 +19,7 @@ Options:
   --package NAME       Android package, default com.limelight.noirdebug
   --asset PATH         Motion HTML, default high-detail-motion.html
   --monitor ID         Host display for motion; default Sunshine output_name
+  --focus-mode MODE    interactive (default) or controlled
   --no-audio           Do not generate/play the stereo test tone
   --screenshot PATH    Capture a normalized PNG after timing (intrusive)
   -h, --help           Show help
@@ -31,8 +32,10 @@ host=""
 serial=""
 duration=60
 package="com.limelight.noirdebug"
-asset="$skill_dir/assets/high-detail-motion.html"
+default_asset="$skill_dir/assets/high-detail-motion.html"
+asset="$default_asset"
 monitor=""
+focus_mode="interactive"
 audio=1
 screenshot=""
 while [ "$#" -gt 0 ]; do
@@ -43,6 +46,7 @@ while [ "$#" -gt 0 ]; do
     --package) package="${2:?--package requires a value}"; shift 2 ;;
     --asset) asset="${2:?--asset requires a value}"; shift 2 ;;
     --monitor) monitor="${2:?--monitor requires a value}"; shift 2 ;;
+    --focus-mode) focus_mode="${2:?--focus-mode requires a value}"; shift 2 ;;
     --no-audio) audio=0; shift ;;
     --screenshot) screenshot="${2:?--screenshot requires a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -52,6 +56,7 @@ done
 
 case "$duration" in *[!0-9]*|'') echo "--duration must be an integer" >&2; exit 2 ;; esac
 if [ "$duration" -lt 5 ] || [ "$duration" -gt 600 ]; then echo "--duration must be 5-600" >&2; exit 2; fi
+case "$focus_mode" in interactive|controlled) ;; *) echo "--focus-mode must be interactive or controlled" >&2; exit 2 ;; esac
 if ! printf '%s' "$package" | grep -Eq '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$'; then echo "invalid package" >&2; exit 2; fi
 [ -f "$asset" ] || { echo "asset not found: $asset" >&2; exit 2; }
 command -v adb >/dev/null 2>&1 || { echo "adb is required" >&2; exit 127; }
@@ -95,6 +100,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/jmgo-stream-test.XXXXXX")"
 tone_pid=""
 opened=0
 opened_window_id=""
+initial_front_app=""
 cleanup() {
   adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1 || true
   if [ -n "$tone_pid" ]; then kill "$tone_pid" 2>/dev/null || true; wait "$tone_pid" 2>/dev/null || true; fi
@@ -104,6 +110,13 @@ cleanup() {
       -e 'set windowID to item 1 of argv as integer' \
       -e 'tell application "Safari" to close (first window whose id is windowID)' \
       -e 'end run' "$opened_window_id" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$initial_front_app" ]; then
+    osascript \
+      -e 'on run argv' \
+      -e 'set restoreApp to item 1 of argv' \
+      -e 'tell application "System Events" to set frontmost of first application process whose name is my restoreApp to true' \
+      -e 'end run' "$initial_front_app" >/dev/null 2>&1 || true
   fi
   rm -rf "$work"
 }
@@ -117,7 +130,8 @@ if [ "$audio" -eq 1 ]; then
     -map '[a]' -c:a pcm_s16le "$work/tone.wav"
 fi
 
-restore_app="$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')"
+initial_front_app="$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')"
+if [ "$focus_mode" = "controlled" ]; then restore_app="Safari"; else restore_app="$initial_front_app"; fi
 asset_url="$(node -e 'const {pathToFileURL}=require("url"); console.log(pathToFileURL(process.argv[1]).href)' "$asset")"
 opened_window_id="$(osascript \
   -e 'on run argv' \
@@ -131,6 +145,24 @@ opened_window_id="$(osascript \
   -e 'end run' "$asset_url" "$restore_app")"
 case "$opened_window_id" in *[!0-9]*|'') echo "unable to create dedicated Safari window" >&2; exit 1 ;; esac
 opened=1
+motion_title() {
+  osascript \
+    -e 'on run argv' \
+    -e 'set windowID to item 1 of argv as integer' \
+    -e 'tell application "Safari" to return name of current tab of (first window whose id is windowID)' \
+    -e 'end run' "$opened_window_id"
+}
+fresh_motion_title() {
+  local previous current
+  previous="$(motion_title)"
+  current="$previous"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.05
+    current="$(motion_title)"
+    if [ "$current" != "$previous" ]; then printf '%s\n' "$current"; return; fi
+  done
+  printf '%s\n' "$current"
+}
 placed=0
 for _ in 1 2 3 4 5; do
   if actual_bounds="$(osascript \
@@ -169,15 +201,42 @@ if [ "$actual_center_x" -lt "$display_x" ] || [ "$actual_center_x" -ge "$display
   echo "Safari remained outside display $display_id: $actual_bounds" >&2
   exit 1
 fi
-echo "Motion source on display $display_id: ${display_width}x${display_height} at ${display_x},${display_y}; Safari $actual_bounds" >&2
+echo "Motion source on display $display_id: ${display_width}x${display_height} at ${display_x},${display_y}; Safari $actual_bounds; focus $focus_mode" >&2
+source_check=0
+if [ "$asset" = "$default_asset" ]; then source_check=1; fi
 if [ "$audio" -eq 1 ]; then afplay "$work/tone.wav" >/dev/null 2>&1 & tone_pid=$!; fi
 sleep 3
 adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1
 adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -enable >/dev/null 2>&1
+sleep 1
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -dump > "$work/preflight-timestats.txt"
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1
+surface_marker="layerName = SurfaceView - $package/com.limelight.Game#0"
+grep -Fq "$surface_marker" "$work/preflight-timestats.txt" || { echo "active Game surface is not presenting frames" >&2; exit 1; }
+source_start_title=""
+source_end_title=""
+source_start_focus_app=""
+source_end_focus_app=""
+source_end_epoch_ms=0
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1
+adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -enable >/dev/null 2>&1
 adb -s "$serial" logcat -c
+if [ "$focus_mode" = "controlled" ]; then
+  osascript -e 'tell application "Safari" to activate' >/dev/null
+  sleep 0.2
+fi
+if [ "$source_check" -eq 1 ]; then
+  source_start_title="$(fresh_motion_title)"
+  source_start_focus_app="$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')"
+fi
 
 echo "Measuring $duration seconds with no midpoint probes..." >&2
 sleep "$duration"
+if [ "$source_check" -eq 1 ]; then
+  source_end_title="$(motion_title)"
+  source_end_epoch_ms="$(node -e 'console.log(Date.now())')"
+  source_end_focus_app="$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true')"
+fi
 adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -dump > "$work/timestats.txt"
 adb -s "$serial" logcat -d -v brief > "$work/logcat.txt" 2>/dev/null
 adb -s "$serial" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1
@@ -187,6 +246,17 @@ metrics="$(node "$script_dir/parse-timestats.mjs" "$work/timestats.txt" "$packag
 metrics_rc=$?
 set -e
 printf '%s\n' "$metrics"
+
+source_rc=0
+if [ "$source_check" -eq 1 ]; then
+  set +e
+  source_metrics="$(node "$script_dir/parse-motion-source.mjs" "$source_start_title" "$source_end_title" "$source_end_epoch_ms" "$focus_mode" "$duration" "$source_start_focus_app" "$source_end_focus_app")"
+  source_rc=$?
+  set -e
+  printf '%s\n' "$source_metrics"
+else
+  printf '{"motionSourceEvaluated":false}\n'
+fi
 
 avsync_rc=0
 if [ "$audio" -eq 1 ] && [ "$duration" -ge 20 ]; then
@@ -214,4 +284,4 @@ if [ -n "$screenshot" ]; then
   echo "screenshot: $screenshot" >&2
 fi
 
-if [ "$metrics_rc" -ne 0 ] || [ "$avsync_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi
+if [ "$metrics_rc" -ne 0 ] || [ "$source_rc" -ne 0 ] || [ "$avsync_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi

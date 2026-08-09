@@ -6,10 +6,33 @@
 <script>
 const canvas=document.getElementById('c');
 const ctx=canvas.getContext('2d',{alpha:false});
+const titleIntervalFrames=15;
 let frame=0;
+let firstFrameNow=null;
+let lastFrameNow=null;
+let maximumGapMs=0;
+let gapEvents34Ms=0;
+let focusLossEvents=0;
+let hiddenEvents=0;
 function resize(){const d=devicePixelRatio||1;canvas.width=Math.round(innerWidth*d);canvas.height=Math.round(innerHeight*d)}
-addEventListener('resize',resize);resize();
+function publish(){
+  const now=lastFrameNow??performance.now();
+  const elapsed=firstFrameNow===null?0:now-firstFrameNow;
+  const lastEpoch=Math.round(performance.timeOrigin+now);
+  document.title=`JMGO_MOTION frame=${frame} elapsedMs=${elapsed.toFixed(1)} maxGapMs=${maximumGapMs.toFixed(1)} gaps34=${gapEvents34Ms} blurs=${focusLossEvents} hidden=${hiddenEvents} lastEpochMs=${lastEpoch}`;
+}
+addEventListener('resize',resize);
+addEventListener('blur',()=>{focusLossEvents++;publish()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)hiddenEvents++;publish()});
+resize();
 function draw(now){
+  if(firstFrameNow===null)firstFrameNow=now;
+  if(lastFrameNow!==null){
+    const gap=now-lastFrameNow;
+    maximumGapMs=Math.max(maximumGapMs,gap);
+    if(gap>=34)gapEvents34Ms++;
+  }
+  lastFrameNow=now;
   const w=canvas.width,h=canvas.height,t=now/1000;
   ctx.fillStyle='#07111d';ctx.fillRect(0,0,w,h);
   const cell=Math.max(24,Math.floor(w/48));
@@ -30,7 +53,16 @@ function draw(now){
   ctx.fillStyle='#fff';ctx.font=`${Math.max(28,h/38)}px monospace`;
   ctx.fillText('JMGO 1080p60 MOTION + AUDIO',40,65);
   ctx.fillText(`frame ${frame}  ${now.toFixed(1)} ms`,40,115);
-  frame++;requestAnimationFrame(draw);
+  const markerSize=Math.max(18,Math.floor(h/54));
+  const markerX=20,markerY=h-markerSize-20;
+  ctx.fillStyle='#ff00ff';ctx.fillRect(markerX-4,markerY-4,markerSize*16+8,markerSize+8);
+  for(let bit=0;bit<16;bit++){
+    ctx.fillStyle=((frame>>>bit)&1)?'#fff':'#000';
+    ctx.fillRect(markerX+bit*markerSize,markerY,markerSize,markerSize);
+  }
+  frame++;
+  if(frame%titleIntervalFrames===0)publish();
+  requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 </script>

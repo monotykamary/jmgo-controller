@@ -7,7 +7,7 @@ A release is complete only when all checks pass:
 1. The installed package is `com.limelight.noirdebug`; old stock/experiment packages are absent.
 2. Artemis negotiates H.264 at the requested 1280×720 or 1920×1080 and 60 FPS.
 3. Logs show 150 ms input lead, decoded and five-image prepared queue depths at timer start, a 38,400-byte stereo AudioTrack request, and `JMGO dynamic audio sync enabled with 415 ms audio baseline` followed by periodic holdback, scheduler compensation, sink lead, queued audio, route change, queue-drain, video-depth, and playback-speed telemetry. On the built-in speaker route, AudioFlinger should report 9,600 frames and zero underruns; its variable latency column is not the A/V synchronization clock.
-4. Patched Sunshine JMGO reports the expected monitor, bitrate, and `minimum_fps_target = 30`; the application firewall permits its LAN traffic. The motion page must be in the dedicated Safari window on that same monitor.
+4. Patched Sunshine JMGO reports the expected monitor, bitrate, and `minimum_fps_target = 30`; the application firewall permits its LAN traffic. The motion page must be in the dedicated Safari window on that same monitor. Before/after title snapshots must show 55–65 source rAF FPS, 90–110% timed-span coverage, zero timed ≥34 ms source gaps, and a final sample no more than 500 ms stale. Controlled runs additionally require Safari frontmost at both timed boundaries plus zero reported blur and hidden events.
 5. A high-detail motion run with continuous 48 kHz stereo audio has 100% 15–18 ms intervals and maximum 17–18 ms.
 6. SurfaceFlinger dropped, late-acquire, and bad-desired-present counts are zero.
 7. Transport, Wi-Fi scan, decoder, decoded-image replacement, image-ring, writer/reader, scheduler, and audio fault counts are zero.
@@ -22,14 +22,14 @@ A release is complete only when all checks pass:
 2. Install the fresh-clone APK.
 3. Run `jmgo-artemis --minimum-fps 30 --monitor 4 --app Desktop` for the certified virtual display, or choose the actual intended monitor/application. This prefers Sunshine JMGO and stops the projector Settings scanner.
 4. Verify the Game activity is foreground and do not reopen projector Settings.
-5. Run `pnpm simulate:avsync`, then `jmgo-stream-test --host HOST --monitor 4 --duration 20` for fast convergence feedback and `--duration 60` for the ordinary hardware gate. Certify the final candidate with one idle `--duration 300` soak. The script creates, verifies, and later closes a dedicated Safari window on the selected display while restoring the previously frontmost application after setup.
-6. Do nothing else during the definitive five-minute sleep. An interactive-machine pass is a separate stress test because foreground applications share WindowServer, GPU, capture, encoder, and network resources; it cannot be relabeled as controlled certification.
+5. Run `pnpm simulate:avsync`, then `jmgo-stream-test --host HOST --monitor 4 --duration 20 --focus-mode interactive` for fast coexistence feedback and `--duration 60` for the ordinary hardware gate. Certify the final candidate with one idle `--duration 300 --focus-mode controlled` soak. Interactive mode restores the prior app but still rejects source throttling; controlled mode leaves Safari foreground, requires it at both timed boundaries, and rejects reported blur or hidden events. Both restore the original app during cleanup.
+6. Do nothing else during the definitive controlled five-minute sleep. An interactive-machine pass is a separate stress test because foreground applications share WindowServer, GPU, capture, encoder, and network resources; it cannot be relabeled as controlled certification.
 7. Treat any long gap or fault event as failure; inspect timestamps before rerunning.
 8. Use `--screenshot /tmp/result.png` only after timing.
 
 ## Why SurfaceFlinger
 
-The rendered layer's present-to-present histogram observes what actually reaches the projector compositor. Client FPS counters can report decode or receive activity while the visible Surface repeats an old buffer. It also cannot prove that each submitted buffer contains the right temporal frame, so decoded queue replacement is independently fatal. The target layer is:
+The rendered layer's present-to-present histogram observes what actually reaches the projector compositor. Client FPS counters can report decode or receive activity while the visible Surface repeats an old buffer. Safari title deltas independently prove that the source generated fresh 55–65 FPS rAF work, and the page draws a 16-bit frame marker into captured pixels. The current gate does not yet decode that marker at the projector, so host capture duplication remains a narrower residual blind spot; decoded queue replacement is independently fatal. The target layer is:
 
 ```text
 SurfaceView - com.limelight.noirdebug/com.limelight.Game#0
@@ -39,6 +39,8 @@ SurfaceView - com.limelight.noirdebug/com.limelight.Game#0
 
 The test rejects log lines containing:
 
+- source rAF gap ≥34 ms, stale source telemetry, or source rate outside 55–65 FPS
+- controlled-mode source blur or hidden event
 - encoded queue overflow
 - network frame/audio drop
 - `WifiTracker` scan during the timed interval
@@ -54,6 +56,12 @@ The test rejects log lines containing:
 - more than 75 ms of tail route/video error
 - playback pinned near 0.98 or 1.02 for all three tail samples
 - fatal exception
+
+## Source freshness
+
+The high-detail page publishes cumulative frame, elapsed-time, ≥34 ms gap, blur, hidden, and last-frame epoch counters in its title every fifteen frames. The runner snapshots the title immediately before and after the same timed sleep used for SurfaceFlinger. It compares counter deltas, so setup activation is excluded. Interactive mode allows Safari to remain background only when measured rAF still passes; controlled mode requires Safari at both boundaries and treats reported focus or visibility loss as invalid. The page also encodes the low sixteen frame-counter bits in a magenta-bordered black/white strip for future end-to-end pixel-sequence decoding.
+
+The runner performs a one-second presentation preflight before baselining source counters. A resumed `Game` activity without new SurfaceFlinger buffers is rejected immediately instead of consuming a long test window. No ADB command runs during the actual sleep. Source and A/V JSON results include `failureReasons`, so source rate/gap/focus failures remain distinct from queue pressure, route divergence, speed saturation, and downstream fault lines.
 
 ## Audio
 
