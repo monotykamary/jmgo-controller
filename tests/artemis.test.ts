@@ -169,27 +169,52 @@ test("Sunshine monitor save is atomic and private", async () => {
   }
 });
 
-test("Artemis speaker holdback is derived from the video staging budget", async () => {
-  const patch = await readFile(
-    join(process.cwd(), "experiments", "artemis-jmgo", "artemis-v20.2.6.patch"),
-    "utf8",
-  );
+test("Artemis speaker holdback is derived from the video presentation budget", async () => {
+  const [patch, nativePatch] = await Promise.all([
+    readFile(
+      join(process.cwd(), "experiments", "artemis-jmgo", "artemis-v20.2.6.patch"),
+      "utf8",
+    ),
+    readFile(
+      join(process.cwd(), "experiments", "artemis-jmgo", "moonlight-common-c.patch"),
+      "utf8",
+    ),
+  ]);
   const integerConstant = (name: string): number => {
     const match = patch.match(new RegExp(`${name} = (\\d+);`, "u"));
     assert.ok(match, `missing ${name}`);
     return Number(match[1]);
+  };
+  const longConstant = (name: string): number => {
+    const match = patch.match(new RegExp(`${name} = ([\\d_]+)L;`, "u"));
+    assert.ok(match?.[1], `missing ${name}`);
+    return Number(match[1].replaceAll("_", ""));
   };
 
   const inputLeadMs = integerConstant("JMGO_VIDEO_INPUT_LEAD_MS");
   const decodedImages = integerConstant("JMGO_VIDEO_DECODED_START_IMAGES");
   const preparedImages = integerConstant("JMGO_VIDEO_PREPARED_START_IMAGES");
   const framesPerSecond = integerConstant("JMGO_STREAM_FPS");
+  const presentationHandoffLeadNs = longConstant(
+    "JMGO_VIDEO_PRESENTATION_HANDOFF_LEAD_NS",
+  );
+  const nativeInputLeadMatch = nativePatch.match(/presentationLeadMs = (\d+);/u);
+  assert.ok(nativeInputLeadMatch, "missing native presentation lead");
 
-  assert.equal(inputLeadMs + ((decodedImages + preparedImages) * 1000) / framesPerSecond, 400);
+  assert.equal(inputLeadMs, Number(nativeInputLeadMatch[1]));
+  assert.equal(decodedImages, integerConstant("DECODED_IMAGE_START_THRESHOLD"));
+  assert.equal(preparedImages, integerConstant("PREPARED_IMAGE_QUEUE_LIMIT"));
+  assert.equal(presentationHandoffLeadNs, longConstant("PRESENTATION_HANDOFF_LEAD_NS"));
+  assert.equal(
+    inputLeadMs +
+      ((decodedImages + preparedImages) * 1000) / framesPerSecond +
+      presentationHandoffLeadNs / 1_000_000,
+    415,
+  );
   assert.match(
     patch,
-    /JMGO_AUDIO_SYNC_DELAY_NS =\r?\n\+\s+JMGO_VIDEO_INPUT_LEAD_MS \* 1_000_000L \+/u,
+    /1_000_000_000L \/ JMGO_STREAM_FPS \+\r?\n\+\s+JMGO_VIDEO_PRESENTATION_HANDOFF_LEAD_NS;/u,
   );
   assert.match(patch, /JMGO_AUDIO_QUEUE_FRAMES = 128;/u);
-  assert.doesNotMatch(patch, /JMGO_AUDIO_SYNC_DELAY_NS = 400_000_000L/u);
+  assert.doesNotMatch(patch, /JMGO_AUDIO_SYNC_DELAY_NS = [\d_]+L/u);
 });

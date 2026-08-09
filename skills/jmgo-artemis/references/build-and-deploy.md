@@ -75,7 +75,7 @@ width=1920 ... height=1080 ... frame-rate=60
 JMGO input pacing started with 150 ms lead
 JMGO timer pacing started with N decoded and 5 prepared frames available before VSync
 Audio track configuration: 38400 true
-JMGO calculated audio holdback: 400 ms
+JMGO calculated audio holdback: 415 ms
 ```
 
 A build is not acceptance. Run the `jmgo-stream-test` skill without any midpoint ADB command and require a 60-second gate plus a five-minute run with perfect cadence and zero diagnostic faults. This includes zero decoded-image replacement, Wi-Fi scan, network-drop, prepared-queue-empty, compositor, and audio lines.

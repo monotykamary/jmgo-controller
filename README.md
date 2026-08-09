@@ -172,7 +172,7 @@ Selecting an application asks Sunshine to launch one configured application entr
 
 By default the command updates Sunshine's `output_name` and `minimum_fps_target` only when requested, restarts Sunshine, stops the JMGO Settings process that otherwise performs disruptive Wi-Fi scans, force-stops `com.limelight.noirdebug`, and launches JMGO Artemis Lab or the selected application directly. It automatically prefers `/Applications/Sunshine JMGO.app` when installed; set `JMGO_SUNSHINE_APP` to override it. Restarting first clears orphaned sessions that cause the empty chooser popup. Use `--no-restart` only when deliberately preserving an active Sunshine session; it cannot be combined with `--monitor` or `--minimum-fps`.
 
-The tested streaming profile is H.264, Balanced pacing, 60 FPS, Sunshine `minimum_fps_target = 30`, the [patched macOS capture host](experiments/sunshine-jmgo/README.md), 150 ms of encoded-input lead, a ten-image decoded startup threshold with five copy-ready frames, a 15-image burst queue, a 200 ms AudioTrack stall buffer, a calculated 400 ms timestamped speaker holdback, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
+The tested streaming profile is H.264, Balanced pacing, 60 FPS, Sunshine `minimum_fps_target = 30`, the [patched macOS capture host](experiments/sunshine-jmgo/README.md), 150 ms of encoded-input lead, a ten-image decoded startup threshold with five copy-ready frames, a 15-image burst queue, a 200 ms AudioTrack stall buffer, a calculated 415 ms timestamped speaker holdback, and either 1280×720 or 1920×1080. See the [Artemis experiment](experiments/artemis-jmgo/README.md).
 
 ## Keyboard, mouse, and touch input over ADB
 

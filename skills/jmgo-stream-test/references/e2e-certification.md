@@ -6,7 +6,7 @@ A release is complete only when all checks pass:
 
 1. The installed package is `com.limelight.noirdebug`; old stock/experiment packages are absent.
 2. Artemis negotiates H.264 at the requested 1280×720 or 1920×1080 and 60 FPS.
-3. Logs show 150 ms input lead, decoded and five-image prepared queue depths at timer start, a 38,400-byte stereo AudioTrack request, and `JMGO calculated audio holdback: 400 ms`. On the built-in speaker route, AudioFlinger should report 9,600 frames and zero underruns; its variable latency column is not the A/V synchronization clock.
+3. Logs show 150 ms input lead, decoded and five-image prepared queue depths at timer start, a 38,400-byte stereo AudioTrack request, and `JMGO calculated audio holdback: 415 ms`. On the built-in speaker route, AudioFlinger should report 9,600 frames and zero underruns; its variable latency column is not the A/V synchronization clock.
 4. Patched Sunshine JMGO reports the expected monitor, bitrate, and `minimum_fps_target = 30`; the application firewall permits its LAN traffic. The motion page must be in the dedicated Safari window on that same monitor.
 5. A high-detail motion run with continuous 48 kHz stereo audio has 100% 15–18 ms intervals and maximum 17–18 ms.
 6. SurfaceFlinger dropped, late-acquire, and bad-desired-present counts are zero.
@@ -54,7 +54,7 @@ The test rejects log lines containing:
 
 ## Audio
 
-The script generates two low-volume PCM sine channels at 440 Hz and 880 Hz, 48 kHz, 16-bit stereo. This exercises host capture, Opus transport, client PCM pooling, AudioTrack, and the projector output without committing an audio artifact. It detects audio-path faults but not lip sync. The calculated holdback must equal `150 + ((10 + 5) / 60 × 1000) = 400 ms`. Speaker synchronization uses a zero-source-offset flash/click clip rendered natively on the exact captured monitor; ADB screencapture cannot observe acoustic output.
+The script generates two low-volume PCM sine channels at 440 Hz and 880 Hz, 48 kHz, 16-bit stereo. This exercises host capture, Opus transport, client PCM pooling, AudioTrack, and the projector output without committing an audio artifact. It detects audio-path faults but not lip sync. The calculated holdback must equal `150 + ((10 + 5) / 60 × 1000) + 15 = 415 ms`; the final 15 ms is the pacer's pre-VSync handoff interval. Speaker synchronization uses a zero-source-offset flash/click clip rendered natively on the exact captured monitor; ADB screencapture cannot observe acoustic output.
 
 ## Screenshot normalization
 

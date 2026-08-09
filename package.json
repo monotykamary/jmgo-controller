@@ -1,6 +1,6 @@
 {
   "name": "jmgo-controller",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Local-network control, ADB automation, verified Play delivery, and certified Artemis streaming for JMGO projectors",
   "type": "module",
   "bin": {

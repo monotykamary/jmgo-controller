@@ -15,7 +15,7 @@ The solution decouples each blocking boundary with deliberate bounded reserves:
 - An urgent-display pacer anchors once to VSync and then increments a monotonic deadline every 16.67 ms. It queues 15 ms before VSync and requires at least 5 ms of compositor latch margin.
 - Each writer image inherits the decoder's crop rectangle. SurfaceFlinger scales 1280×720 content across the 1920×1080 video layer and presents 1920×1080 content directly, avoiding an uninitialized border in either mode.
 - Plane copies use three direct-buffer JNI calls per frame; native stride-aware `memcpy` is required because Java row copies only reached 45–49 FPS.
-- AudioTrack requests 200 ms (forty 5 ms packets) solely to absorb JMGO HAL stalls. A preallocated 128-frame PCM pool moves blocking writes to an audio-priority worker without blocking Moonlight's receive callback. Each packet receives a monotonic release timestamp 400 ms in the future for speaker synchronization.
+- AudioTrack requests 200 ms (forty 5 ms packets) solely to absorb JMGO HAL stalls. A preallocated 128-frame PCM pool moves blocking writes to an audio-priority worker without blocking Moonlight's receive callback. Each packet receives a monotonic release timestamp 415 ms in the future for speaker synchronization.
 
 The final profile intentionally prioritizes continuous motion over latency. Earlier zero-lead and one/four-image variants passed short gates but did not survive sustained high-detail motion on the actual captured virtual display. The final path retains synchronized projector-speaker audio while using 150 ms of input lead and two explicit image-staging depths.
 
@@ -23,7 +23,7 @@ The final profile intentionally prioritizes continuous motion over latency. Earl
 
 AudioTrack capacity is an underrun boundary, not an A/V clock. A 10 ms request was rejected because the HAL expanded it from 480 to 4,330 sample frames and the active track accumulated 144 underruns. Changing capacity from 300 ms to 200 ms retained zero underruns but still let audio precede a timestamp-matched flash on the streamed display.
 
-The fork's deterministic video holdback at 60 FPS is `150 ms + ((10 decoded + 5 prepared) / 60 FPS) = 400 ms`. The audio worker therefore waits until each packet's arrival timestamp plus 400 ms before writing it to the unchanged 9,600-frame AudioTrack. This keeps synchronization policy separate from the device buffer used for periodic HAL stalls. A zero-source-offset flash/click animation shown natively on monitor 4 placed the result within the user-accepted range.
+The fork's configured video path at 60 FPS reaches ImageWriter handoff after `150 ms + ((10 decoded + 5 prepared) / 60 FPS) = 400 ms`. The pacer deliberately hands that image over 15 ms before its target VSync, so the complete presentation budget is `400 + 15 = 415 ms`. The audio worker waits until each packet's arrival timestamp plus that derived 415 ms before writing it to the unchanged 9,600-frame AudioTrack. The separate 5 ms minimum latch margin is a lateness guard, not another delay.
 
 ## Build
 
@@ -131,7 +131,9 @@ The cadence-certified pre-sync APK (`f7c97525112eb4aca6c2c4ac53391e5a0a6916a157c
 
 The capacity-only APK (`7fd9eff6c4815ca1a90fb6dac9f0d72cc89a9b1adc91225b94dc7438f6ad16ac`) requests 38,400 bytes and retained all 9,600 sample frames with zero underruns, but a zero-offset monitor-4 test proved that audio still preceded video. It is retained only as rejected evidence.
 
-The calculated-holdback APK (`ccc41b60a56748d81bc190968bd29f76641521e3dc279f3e9296e5f141f0cd28`) keeps that stable AudioTrack and adds the separate 400 ms timestamp policy. Runtime startup reported seven to eight decoded and five prepared queued images, with the remaining staged ownership in preparation, acquisition, and compositor handoff. The zero-source-offset flash/click result was judged close and acceptable.
+The pre-handoff-formula APK (`ccc41b60a56748d81bc190968bd29f76641521e3dc279f3e9296e5f141f0cd28`) added a 400 ms timestamp policy. A zero-source-offset flash/click check looked close, but subsequent YouTube playback exposed audio still slightly preceding video because the formula ended at ImageWriter handoff.
+
+The handoff-aware APK (`875228d3973f280d7ef969ef3698c1e0673f3ce187af07667417ad6ddba1d3f0`) adds the pacer's existing 15 ms pre-VSync interval for a derived 415 ms holdback. A fresh pinned build was installed and logged the 415 ms policy; its 9,600-frame speaker track reported zero underruns and no audio queue drops.
 
 ## Patch layout
 

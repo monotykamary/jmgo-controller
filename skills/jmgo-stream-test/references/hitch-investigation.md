@@ -34,7 +34,7 @@ Balanced pacing remained the right user-facing mode, but its producer had to mov
 
 A separate package disabled audio at the protocol level. Video still hitched, proving audio was not the root cause. The test did expose a second issue: JMGO AudioTrack writes can block for about 100 ms, and naive nonblocking writes dropped PCM samples.
 
-The final audio design preserves packets in a preallocated 128-frame pool and performs blocking writes on an audio-priority worker. A 10 ms request was not viable on this HAL: Android expanded it from 480 to 4,330 frames and the active track accumulated 144 underruns. The stable device boundary remains forty 5 ms packets (9,600 frames), but capacity-only 300 ms and 200 ms attempts did not synchronize the streams. Each PCM packet now has an independent 400 ms monotonic release timestamp derived from the fork's video staging budget.
+The final audio design preserves packets in a preallocated 128-frame pool and performs blocking writes on an audio-priority worker. A 10 ms request was not viable on this HAL: Android expanded it from 480 to 4,330 frames and the active track accumulated 144 underruns. The stable device boundary remains forty 5 ms packets (9,600 frames), but capacity-only 300 ms and 200 ms attempts did not synchronize the streams. Each PCM packet now has an independent 415 ms monotonic release timestamp derived from the fork's video staging and pre-VSync handoff budget.
 
 ## Decoder scheduling and image ownership
 
@@ -67,13 +67,13 @@ A later run lost 31 network frames in 450 ms and logged 27 prepared-queue emptie
 
 ## Latency refinement
 
-The first stable image-ring build deliberately used about 130 ms of video reserve plus 120 ms AudioTrack capacity. Short latency sweeps reached zero input lead and a 10 ms audio request, but sustained correctly placed motion still exposed rare ownership, preparation, and presentation failures. The final smoothness-first path restores 150 ms of encoded-input lead, waits for ten decoded images, and starts with five copy-ready images. At 60 FPS those stages calculate to 400 ms; the audio worker applies that delay explicitly while the 200 ms AudioTrack remains only a stall buffer. The 15-image FIFO is bounded burst capacity.
+The first stable image-ring build deliberately used about 130 ms of video reserve plus 120 ms AudioTrack capacity. Short latency sweeps reached zero input lead and a 10 ms audio request, but sustained correctly placed motion still exposed rare ownership, preparation, and presentation failures. The final smoothness-first path restores 150 ms of encoded-input lead, waits for ten decoded images, and starts with five copy-ready images. At 60 FPS those stages reach ImageWriter handoff after 400 ms; the handed-off frame then waits through the explicit 15 ms interval before its target VSync. The audio worker therefore applies the complete 415 ms presentation budget while the 200 ms AudioTrack remains only a stall buffer. The 15-image FIFO is bounded burst capacity.
 
 ## Final evidence
 
 The definitive pre-sync fresh-clone five-minute 1080p60 run at about 14.988 Mbit/s used patched Sunshine capture, `minimum_fps_target = 30`, 150 ms input lead, a ten-image decoded threshold, five copy-ready images, a 15-image burst limit, fixed-period deadlines, scan suppression, high-detail motion isolated in a dedicated Safari window on virtual display 4, and stereo audio. All 18,019 intervals were 15–18 ms with a 17 ms maximum and zero queue replacement, prepared-queue empty, timer delay, Wi-Fi scan, network drop, late native input, compositor fault, or audio fault. The pre-sync APK SHA-256 is `f7c97525112eb4aca6c2c4ac53391e5a0a6916a157cb81a5dd797156ea38875a`; it used the later-rejected 300 ms AudioTrack request.
 
-The capacity-only APK SHA-256 `7fd9eff6c4815ca1a90fb6dac9f0d72cc89a9b1adc91225b94dc7438f6ad16ac` retained a zero-underrun 9,600-frame track but was rejected after a zero-offset monitor-4 test showed audio preceding video. The calculated-holdback fresh-clone APK SHA-256 is `ccc41b60a56748d81bc190968bd29f76641521e3dc279f3e9296e5f141f0cd28`; its 400 ms timestamp policy was judged close and acceptable with the same test. See `measurements.json`.
+The capacity-only APK SHA-256 `7fd9eff6c4815ca1a90fb6dac9f0d72cc89a9b1adc91225b94dc7438f6ad16ac` retained a zero-underrun 9,600-frame track but was rejected after a zero-offset monitor-4 test showed audio preceding video. The 400 ms APK SHA-256 `ccc41b60a56748d81bc190968bd29f76641521e3dc279f3e9296e5f141f0cd28` looked close in that test but remained slightly audio-early during YouTube playback because it omitted the final pre-VSync handoff. The handoff-aware fresh-clone APK SHA-256 is `875228d3973f280d7ef969ef3698c1e0673f3ce187af07667417ad6ddba1d3f0`; it logs the complete 415 ms policy with zero observed underruns or queue drops. See `measurements.json`.
 
 ## Source-display and instrumentation traps
 

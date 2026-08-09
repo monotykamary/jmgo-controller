@@ -240,7 +240,7 @@
       "outcome": "rejected-capacity-is-not-an-av-clock"
     },
     {
-      "stage": "calculated-speaker-av-holdback",
+      "stage": "rejected-pre-vsync-handoff-omission",
       "resolution": "1920x1080",
       "streamFramesPerSecond": 60,
       "encodedInputLeadMs": 150,
@@ -249,6 +249,7 @@
       "calculatedStagedImageFrames": 15,
       "calculatedAudioHoldbackMs": 400,
       "calculation": "150 + ((10 + 5) / 60 * 1000)",
+      "omittedPresentationHandoffLeadMs": 15,
       "observedRuntimeDecodedQueueAtPacerStart": [
         7,
         8
@@ -273,10 +274,40 @@
         375,
         400
       ],
-      "humanResult": "zero-source-offset-result-pretty-close-and-acceptable",
+      "humanResult": "zero-offset-check-was-close-but-youtube-audio-slightly-preceded-video",
       "apkSha256": "ccc41b60a56748d81bc190968bd29f76641521e3dc279f3e9296e5f141f0cd28",
       "buildSource": "fresh-pinned-clone",
-      "outcome": "accepted-calculated-timestamp-holdback"
+      "outcome": "rejected-omitted-presentation-handoff"
+    },
+    {
+      "stage": "presentation-handoff-aware-speaker-sync",
+      "resolution": "1920x1080",
+      "streamFramesPerSecond": 60,
+      "encodedInputLeadMs": 150,
+      "decodedStartImages": 10,
+      "preparedStartImages": 5,
+      "calculatedStagedImageFrames": 15,
+      "presentationHandoffLeadMs": 15,
+      "presentationMinimumMarginMs": 5,
+      "calculatedAudioHoldbackMs": 415,
+      "calculation": "150 + ((10 + 5) / 60 * 1000) + 15",
+      "observedRuntimeDecodedQueueAtPacerStart": [
+        6
+      ],
+      "runtimePreparedQueueAtPacerStart": 5,
+      "audioPacketDurationMs": 5,
+      "audioPoolFrames": 128,
+      "requestedAudioTrackCapacityMs": 200,
+      "configuredAudioTrackBytes": 38400,
+      "serverFrameCount": 9600,
+      "observedAudioFlingerLatencyMs": 311.5,
+      "underruns": 0,
+      "audioQueueDrops": 0,
+      "outputRoute": "built-in-speaker",
+      "runtimeHoldbackLogMs": 415,
+      "apkSha256": "875228d3973f280d7ef969ef3698c1e0673f3ce187af07667417ad6ddba1d3f0",
+      "buildSource": "fresh-pinned-clone",
+      "outcome": "installed-handoff-aware-candidate"
     }
   ],
   "invalidMeasurement": {

@@ -12,7 +12,7 @@ index c706dbf..3ba792a 100644
              resValue "string", "app_label_game", "Diana (Game)"
  
 diff --git a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
-index 53cbf68..b224d81 100755
+index 53cbf68..df3c288 100755
 --- a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 @@ -8,6 +8,10 @@ import android.media.AudioManager;
@@ -26,7 +26,7 @@ index 53cbf68..b224d81 100755
  
  import com.limelight.LimeLog;
  import com.limelight.nvstream.av.audio.AudioRenderer;
-@@ -19,6 +23,33 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -19,6 +23,35 @@ public class AndroidAudioRenderer implements AudioRenderer {
      private final boolean enableAudioFx;
  
      private AudioTrack track;
@@ -35,10 +35,12 @@ index 53cbf68..b224d81 100755
 +    private static final int JMGO_VIDEO_DECODED_START_IMAGES = 10;
 +    private static final int JMGO_VIDEO_PREPARED_START_IMAGES = 5;
 +    private static final int JMGO_STREAM_FPS = 60;
++    private static final long JMGO_VIDEO_PRESENTATION_HANDOFF_LEAD_NS = 15_000_000L;
 +    private static final long JMGO_AUDIO_SYNC_DELAY_NS =
 +            JMGO_VIDEO_INPUT_LEAD_MS * 1_000_000L +
 +            (JMGO_VIDEO_DECODED_START_IMAGES + JMGO_VIDEO_PREPARED_START_IMAGES) *
-+                    1_000_000_000L / JMGO_STREAM_FPS;
++                    1_000_000_000L / JMGO_STREAM_FPS +
++            JMGO_VIDEO_PRESENTATION_HANDOFF_LEAD_NS;
 +    private static final int JMGO_AUDIO_QUEUE_FRAMES = 128;
 +
 +    private static final class JmgoAudioFrame {
@@ -60,7 +62,7 @@ index 53cbf68..b224d81 100755
  
      public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
          this.context = context;
-@@ -147,6 +178,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -147,6 +180,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
                      throw new IllegalStateException();
              }
  
@@ -71,7 +73,7 @@ index 53cbf68..b224d81 100755
              // Skip low latency options if hardware sample rate doesn't match the content
              if (AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC) != sampleRate && lowLatency) {
                  continue;
-@@ -182,25 +217,81 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -182,25 +219,81 @@ public class AndroidAudioRenderer implements AudioRenderer {
              return -2;
          }
  
@@ -161,7 +163,7 @@ index 53cbf68..b224d81 100755
          if (enableAudioFx) {
              // Open an audio effect control session to allow equalizers to apply audio effects
              Intent i = new Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
-@@ -213,6 +304,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -213,6 +306,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
  
      @Override
      public void stop() {

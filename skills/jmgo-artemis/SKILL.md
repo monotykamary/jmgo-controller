@@ -70,7 +70,7 @@ Application selection launches one Sunshine entry, but capture remains monitor-b
 - Client burst capacity: 15 decoded images; ImageReader ownership capacity: 17 images
 - 1080p tested bitrate: 14,988,000 bit/s
 
-Do not switch to latency-focused frame pacing: it bypasses the image ring that fixes JMGO's decoder-output batching. The patched Balanced path uses 150 ms of encoded-input lead, starts preparation after ten decoded images, begins its fixed-period timer with five copy-ready images, retains a 15-image burst limit, requests a 200 ms AudioTrack for HAL-stall tolerance, and applies a separate calculated 400 ms timestamped speaker holdback. Do not restore Sunshine's 60 FPS floor: it overproduced closely timed decoded images and caused silent content-frame replacement even while SurfaceFlinger looked perfect. Do not open projector Settings during a certification run because it can restart the Wi-Fi scanner.
+Do not switch to latency-focused frame pacing: it bypasses the image ring that fixes JMGO's decoder-output batching. The patched Balanced path uses 150 ms of encoded-input lead, starts preparation after ten decoded images, begins its fixed-period timer with five copy-ready images, retains a 15-image burst limit, requests a 200 ms AudioTrack for HAL-stall tolerance, and applies a separate calculated 415 ms timestamped speaker holdback. Do not restore Sunshine's 60 FPS floor: it overproduced closely timed decoded images and caused silent content-frame replacement even while SurfaceFlinger looked perfect. Do not open projector Settings during a certification run because it can restart the Wi-Fi scanner.
 
 ## Build and install
 
