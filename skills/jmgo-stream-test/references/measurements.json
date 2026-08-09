@@ -222,11 +222,11 @@
       "outcome": "rejected-underruns-and-video-clock-mismatch"
     },
     {
-      "stage": "speaker-av-sync-correction",
+      "stage": "rejected-capacity-only-speaker-sync",
       "resolution": "1920x1080",
       "encodedInputLeadMs": 150,
       "decodedStartImages": 10,
-      "estimatedVideoClockReserveMs": 316.67,
+      "incorrectEstimatedVideoClockReserveMs": 316.67,
       "audioPacketDurationMs": 5,
       "requestedAudioTrackCapacityMs": 200,
       "configuredAudioTrackBytes": 38400,
@@ -236,7 +236,47 @@
       "outputRoute": "built-in-speaker",
       "apkSha256": "7fd9eff6c4815ca1a90fb6dac9f0d72cc89a9b1adc91225b94dc7438f6ad16ac",
       "buildSource": "fresh-pinned-clone",
-      "outcome": "speaker-clock-aligned"
+      "humanResult": "audio-preceded-zero-offset-flash",
+      "outcome": "rejected-capacity-is-not-an-av-clock"
+    },
+    {
+      "stage": "calculated-speaker-av-holdback",
+      "resolution": "1920x1080",
+      "streamFramesPerSecond": 60,
+      "encodedInputLeadMs": 150,
+      "decodedStartImages": 10,
+      "preparedStartImages": 5,
+      "calculatedStagedImageFrames": 15,
+      "calculatedAudioHoldbackMs": 400,
+      "calculation": "150 + ((10 + 5) / 60 * 1000)",
+      "observedRuntimeDecodedQueueAtPacerStart": [
+        7,
+        8
+      ],
+      "runtimePreparedQueueAtPacerStart": 5,
+      "audioPacketDurationMs": 5,
+      "audioPoolFrames": 128,
+      "requestedAudioTrackCapacityMs": 200,
+      "configuredAudioTrackBytes": 38400,
+      "serverFrameCount": 9600,
+      "observedVariableAudioFlingerLatencyMsRange": [
+        235.77,
+        302.77
+      ],
+      "underruns": 0,
+      "audioQueueDrops": 0,
+      "outputRoute": "built-in-speaker",
+      "sourceCalibrationSweepMs": [
+        300,
+        325,
+        350,
+        375,
+        400
+      ],
+      "humanResult": "zero-source-offset-result-pretty-close-and-acceptable",
+      "apkSha256": "ccc41b60a56748d81bc190968bd29f76641521e3dc279f3e9296e5f141f0cd28",
+      "buildSource": "fresh-pinned-clone",
+      "outcome": "accepted-calculated-timestamp-holdback"
     }
   ],
   "invalidMeasurement": {

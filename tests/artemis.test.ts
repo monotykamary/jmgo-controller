@@ -168,3 +168,28 @@ test("Sunshine monitor save is atomic and private", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("Artemis speaker holdback is derived from the video staging budget", async () => {
+  const patch = await readFile(
+    join(process.cwd(), "experiments", "artemis-jmgo", "artemis-v20.2.6.patch"),
+    "utf8",
+  );
+  const integerConstant = (name: string): number => {
+    const match = patch.match(new RegExp(`${name} = (\\d+);`, "u"));
+    assert.ok(match, `missing ${name}`);
+    return Number(match[1]);
+  };
+
+  const inputLeadMs = integerConstant("JMGO_VIDEO_INPUT_LEAD_MS");
+  const decodedImages = integerConstant("JMGO_VIDEO_DECODED_START_IMAGES");
+  const preparedImages = integerConstant("JMGO_VIDEO_PREPARED_START_IMAGES");
+  const framesPerSecond = integerConstant("JMGO_STREAM_FPS");
+
+  assert.equal(inputLeadMs + ((decodedImages + preparedImages) * 1000) / framesPerSecond, 400);
+  assert.match(
+    patch,
+    /JMGO_AUDIO_SYNC_DELAY_NS =\r?\n\+\s+JMGO_VIDEO_INPUT_LEAD_MS \* 1_000_000L \+/u,
+  );
+  assert.match(patch, /JMGO_AUDIO_QUEUE_FRAMES = 128;/u);
+  assert.doesNotMatch(patch, /JMGO_AUDIO_SYNC_DELAY_NS = 400_000_000L/u);
+});

@@ -12,28 +12,47 @@ index c706dbf..3ba792a 100644
              resValue "string", "app_label_game", "Diana (Game)"
  
 diff --git a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
-index 53cbf68..fbdf2b6 100755
+index 53cbf68..b224d81 100755
 --- a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
-@@ -8,6 +8,9 @@ import android.media.AudioManager;
+@@ -8,6 +8,10 @@ import android.media.AudioManager;
  import android.media.AudioTrack;
  import android.media.audiofx.AudioEffect;
  import android.os.Build;
 +import android.os.Process;
 +
 +import java.util.concurrent.ArrayBlockingQueue;
++import java.util.concurrent.locks.LockSupport;
  
  import com.limelight.LimeLog;
  import com.limelight.nvstream.av.audio.AudioRenderer;
-@@ -19,6 +22,15 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -19,6 +23,33 @@ public class AndroidAudioRenderer implements AudioRenderer {
      private final boolean enableAudioFx;
  
      private AudioTrack track;
 +    private static final int JMGO_AUDIO_BUFFER_FRAMES = 40;
-+    private static final int JMGO_AUDIO_QUEUE_FRAMES = 32;
-+    private final ArrayBlockingQueue<short[]> freeAudioFrames =
++    private static final int JMGO_VIDEO_INPUT_LEAD_MS = 150;
++    private static final int JMGO_VIDEO_DECODED_START_IMAGES = 10;
++    private static final int JMGO_VIDEO_PREPARED_START_IMAGES = 5;
++    private static final int JMGO_STREAM_FPS = 60;
++    private static final long JMGO_AUDIO_SYNC_DELAY_NS =
++            JMGO_VIDEO_INPUT_LEAD_MS * 1_000_000L +
++            (JMGO_VIDEO_DECODED_START_IMAGES + JMGO_VIDEO_PREPARED_START_IMAGES) *
++                    1_000_000_000L / JMGO_STREAM_FPS;
++    private static final int JMGO_AUDIO_QUEUE_FRAMES = 128;
++
++    private static final class JmgoAudioFrame {
++        final short[] samples;
++        long releaseTimeNs;
++
++        JmgoAudioFrame(int sampleCount) {
++            samples = new short[sampleCount];
++        }
++    }
++
++    private final ArrayBlockingQueue<JmgoAudioFrame> freeAudioFrames =
 +            new ArrayBlockingQueue<>(JMGO_AUDIO_QUEUE_FRAMES);
-+    private final ArrayBlockingQueue<short[]> readyAudioFrames =
++    private final ArrayBlockingQueue<JmgoAudioFrame> readyAudioFrames =
 +            new ArrayBlockingQueue<>(JMGO_AUDIO_QUEUE_FRAMES);
 +    private Thread audioWriterThread;
 +    private volatile boolean audioStopping;
@@ -41,18 +60,18 @@ index 53cbf68..fbdf2b6 100755
  
      public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
          this.context = context;
-@@ -147,6 +159,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -147,6 +178,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
                      throw new IllegalStateException();
              }
  
-+            // Forty 5 ms packets align audio with the 150 ms input lead, ten-image video
-+            // reserve, and measured JMGO speaker HAL latency.
++            // The AudioTrack capacity absorbs periodic JMGO HAL stalls. A separate
++            // timestamped holdback below handles A/V synchronization.
 +            bufferSize = Math.max(bufferSize, bytesPerFrame * JMGO_AUDIO_BUFFER_FRAMES);
 +
              // Skip low latency options if hardware sample rate doesn't match the content
              if (AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC) != sampleRate && lowLatency) {
                  continue;
-@@ -182,25 +198,70 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -182,25 +217,81 @@ public class AndroidAudioRenderer implements AudioRenderer {
              return -2;
          }
  
@@ -60,8 +79,9 @@ index 53cbf68..fbdf2b6 100755
 +        readyAudioFrames.clear();
 +        int frameSamples = audioConfiguration.channelCount * samplesPerFrame;
 +        for (int i = 0; i < JMGO_AUDIO_QUEUE_FRAMES; i++) {
-+            freeAudioFrames.add(new short[frameSamples]);
++            freeAudioFrames.add(new JmgoAudioFrame(frameSamples));
 +        }
++        audioQueueDrops = 0;
 +
          return 0;
      }
@@ -74,7 +94,7 @@ index 53cbf68..fbdf2b6 100755
 -            // of pending audio data, so we do the above check to be able to bound
 -            // latency at 40 ms in that situation.
 -            track.write(audioData, 0, audioData.length);
-+        short[] frame = freeAudioFrames.poll();
++        JmgoAudioFrame frame = freeAudioFrames.poll();
 +        if (frame == null) {
 +            frame = readyAudioFrames.poll();
 +            audioQueueDrops++;
@@ -86,12 +106,13 @@ index 53cbf68..fbdf2b6 100755
 -            LimeLog.info("Too much pending audio data: " + MoonBridge.getPendingAudioDuration() +" ms");
 +        if (frame == null) {
 +            return;
-+        }
+         }
 +
-+        System.arraycopy(audioData, 0, frame, 0, audioData.length);
++        System.arraycopy(audioData, 0, frame.samples, 0, audioData.length);
++        frame.releaseTimeNs = System.nanoTime() + JMGO_AUDIO_SYNC_DELAY_NS;
 +        if (!readyAudioFrames.offer(frame)) {
 +            freeAudioFrames.offer(frame);
-         }
++        }
      }
  
 +    private void startAudioWriter() {
@@ -99,7 +120,7 @@ index 53cbf68..fbdf2b6 100755
 +        audioWriterThread = new Thread(() -> {
 +            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
 +            while (!audioStopping) {
-+                short[] frame;
++                JmgoAudioFrame frame;
 +                try {
 +                    frame = readyAudioFrames.take();
 +                }
@@ -110,9 +131,16 @@ index 53cbf68..fbdf2b6 100755
 +                    continue;
 +                }
 +
++                long waitNs;
++                while ((waitNs = frame.releaseTimeNs - System.nanoTime()) > 0 &&
++                        !audioStopping) {
++                    LockSupport.parkNanos(waitNs);
++                }
++
 +                int offset = 0;
-+                while (offset < frame.length && !audioStopping) {
-+                    int written = track.write(frame, offset, frame.length - offset);
++                while (offset < frame.samples.length && !audioStopping) {
++                    int written = track.write(frame.samples, offset,
++                            frame.samples.length - offset);
 +                    if (written <= 0) {
 +                        LimeLog.warning("JMGO AudioTrack write failed: " + written);
 +                        break;
@@ -122,6 +150,8 @@ index 53cbf68..fbdf2b6 100755
 +                freeAudioFrames.offer(frame);
 +            }
 +        }, "Audio - JMGO Writer");
++        LimeLog.info("JMGO calculated audio holdback: " +
++                (JMGO_AUDIO_SYNC_DELAY_NS / 1_000_000L) + " ms");
 +        audioWriterThread.start();
 +    }
 +
@@ -131,7 +161,7 @@ index 53cbf68..fbdf2b6 100755
          if (enableAudioFx) {
              // Open an audio effect control session to allow equalizers to apply audio effects
              Intent i = new Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
-@@ -213,6 +274,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -213,6 +304,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
  
      @Override
      public void stop() {
@@ -153,7 +183,7 @@ index 53cbf68..fbdf2b6 100755
              // Close our audio effect control session when we're stopping
              Intent i = new Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
 diff --git a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
-index 537b50f..6573b03 100755
+index 537b50f..cd8772c 100755
 --- a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 @@ -6,8 +6,10 @@ import java.nio.ByteOrder;
@@ -426,7 +456,7 @@ index 537b50f..6573b03 100755
          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
              frameTimeNanos -= activity.getWindowManager().getDefaultDisplay().getAppVsyncOffsetNanos();
          }
-@@ -1035,6 +1222,126 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1035,6 +1222,127 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          Choreographer.getInstance().postFrameCallback(this);
      }
  
@@ -506,8 +536,9 @@ index 537b50f..6573b03 100755
 +                    }
 +                    outputPacingStarted = true;
 +                    LimeLog.info("JMGO timer pacing started with " +
++                            decodedImageQueue.size() + " decoded and " +
 +                            preparedImageQueue.size() +
-+                            " prepared frame available before VSync");
++                            " prepared frames available before VSync");
 +                }
 +
 +                long nowNs = System.nanoTime();
@@ -553,7 +584,7 @@ index 537b50f..6573b03 100755
      private void startChoreographerThread() {
          if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED) {
              // Not using Choreographer in this pacing mode
-@@ -1060,6 +1367,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1060,6 +1368,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          rendererThread = new Thread() {
              @Override
              public void run() {
@@ -561,7 +592,7 @@ index 537b50f..6573b03 100755
                  BufferInfo info = new BufferInfo();
                  while (!stopping) {
                      try {
-@@ -1108,26 +1416,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1108,26 +1417,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                  activeWindowVideoStats.totalFramesRendered++;
                              }
                              else {
@@ -603,7 +634,7 @@ index 537b50f..6573b03 100755
                              }
  
                              // Add delta time to the totals (excluding probable outliers)
-@@ -1241,7 +1546,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1241,7 +1547,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      @Override
      public void start() {
          startRendererThread();
@@ -619,7 +650,7 @@ index 537b50f..6573b03 100755
      }
  
      // !!! May be called even if setup()/start() fails !!!
-@@ -1253,6 +1565,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1253,6 +1566,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          if (rendererThread != null) {
              rendererThread.interrupt();
          }
@@ -632,7 +663,7 @@ index 537b50f..6573b03 100755
  
          // Stop any active codec recovery operations
          synchronized (codecRecoveryMonitor) {
-@@ -1294,6 +1612,24 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1294,6 +1613,24 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
              }
          }
  
@@ -657,7 +688,7 @@ index 537b50f..6573b03 100755
          // Wait for the renderer thread to shut down
          try {
              rendererThread.join();
-@@ -1310,6 +1646,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1310,6 +1647,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      @Override
      public void cleanup() {
          videoDecoder.release();
