@@ -53,6 +53,7 @@ The test rejects log lines containing:
 - decoded image queue replacement
 - decoded image-ring empty
 - timer scheduler delay
+- any video-starvation transition, recovery IDR, codec restart, preparation-worker restart, or Game reconnect
 - ImageReader stall or ImageWriter rejection
 - audio queue drop or AudioTrack write failure
 - legacy pending-audio backlog

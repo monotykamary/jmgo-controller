@@ -74,9 +74,24 @@ After connecting, verify logcat contains:
 width=1920 ... height=1080 ... frame-rate=60
 JMGO input pacing started with 150 ms lead
 JMGO timer pacing started with N decoded and 5 prepared frames available before VSync
+JMGO video starvation started: stage=STAGE, decoded=N, prepared=N, nativePending=N  # only after a fault
 Audio track configuration: 38400 true
 JMGO dynamic audio sync enabled with 415 ms audio baseline
 JMGO dynamic audio holdback: N ms, scheduler compensation: N ms, sink lead: N ms, queued audio: N ms, route change: N ms, queue drain: false, video depth change: N ms, playback speed: N
 ```
 
-A build is not acceptance. Run `pnpm simulate:avsync` on every controller change, then use `jmgo-stream-test` without midpoint ADB commands. A 20-second interactive run is the minimum convergence-aware smoke, 60 seconds is the ordinary hardware gate, and the final release soak is five idle minutes with `--focus-mode controlled`, perfect 55–65 FPS source rAF, perfect compositor cadence, and zero diagnostic or A/V convergence faults. Interactive mode is useful coexistence evidence but does not replace the controlled idle soak. This includes zero decoded-image replacement, Wi-Fi scan, network drop, prepared-queue empty, compositor, audio, pressure-drain, persistent speed-limit, and route-divergence results.
+The debug package also supports deterministic recovery probes. Run them only outside certification windows:
+
+```bash
+serial="$(jmgo host show):5555"
+adb -s "$serial" shell am broadcast \
+  -a com.limelight.JMGO_TEST_VIDEO_STARVATION \
+  -p com.limelight.noirdebug --es stage images --ei durationMs 1500
+adb -s "$serial" shell am broadcast \
+  -a com.limelight.JMGO_TEST_VIDEO_STARVATION \
+  -p com.limelight.noirdebug --es stage input --ei durationMs 4000
+```
+
+The first branch must issue one IDR and at most one codec restart, recover after five prepared images, and avoid a stream reconnect. The second must issue one IDR, no codec restart, and one foreground-safe Game recreation that initializes a new YUV pipeline. A recovery event is success for the fault probe but failure for a clean cadence gate.
+
+A build is not acceptance. Run `pnpm simulate:avsync` on every controller change, then use `jmgo-stream-test` without midpoint ADB commands. A 20-second interactive run is the minimum convergence-aware smoke, 60 seconds is the ordinary hardware gate, and the final release soak is five idle minutes with `--focus-mode controlled`, perfect 55–65 FPS source rAF, perfect compositor cadence, and zero diagnostic or A/V convergence faults. Interactive mode is useful coexistence evidence but does not replace the controlled idle soak. This includes zero decoded-image replacement, Wi-Fi scan, network drop, video-starvation recovery, worker restart, prepared-queue empty, compositor, audio, pressure-drain, persistent speed-limit, and route-divergence results.

@@ -470,6 +470,62 @@
     "nonvisualAverageInputFPS": 60.111,
     "nonvisualMaximumTelemetryGapMs": 1006,
     "nonvisualClassification": "views-synchronized",
-    "remainingBoundary": "UDP delivery versus client depacketization, decode, or presentation"
+    "remainingInitiatorBoundary": "transient UDP delivery, depacketization, or decoder interruption",
+    "confirmedReproduction": {
+      "preparedQueueEmptyEventsInCapturedTenMinutes": 6423,
+      "networkDropLogs": 0,
+      "decodedQueueFaults": 0,
+      "decoderErrors": 0,
+      "fatalExceptions": 0,
+      "connectionTerminations": 0,
+      "classification": "client-presentation-starvation-without-autonomous-recovery"
+    },
+    "selfHealingValidation": {
+      "releaseApkSha256": "119c3f84de86d5fe15ca9e0ddebe399a3e1619e4fffe372a8b28b8c6fc3b0542",
+      "versionName": "20.2.6-jmgo.1",
+      "freshCloneAllAbis": true,
+      "testedAndReleaseSourceBlobsMatch": true,
+      "installedHashVerified": true,
+      "cleanControlledGate": {
+        "durationSeconds": 60,
+        "sourceAverageFPS": 60.001,
+        "sourceGapEventsAtLeast34Ms": 0,
+        "focusLossEvents": 0,
+        "hiddenEvents": 0,
+        "compositorIntervals": 3685,
+        "compositorNormalPercent": 100,
+        "compositorMaximumIntervalMs": 17,
+        "maximumQueuedAudioMs": 660,
+        "tailMaximumPhaseErrorMs": 3,
+        "faultEvents": 0
+      },
+      "idrThresholdMs": 100,
+      "codecRestartThresholdMs": 1000,
+      "streamReconnectThresholdMs": 3000,
+      "imageInjection": {
+        "durationMs": 1500,
+        "idrRequests": 1,
+        "codecRestarts": 1,
+        "streamReconnects": 0,
+        "recoveries": 1,
+        "recoveryDurationMs": 1729,
+        "processStable": true,
+        "legacyEmptyLogEvents": 0
+      },
+      "inputInjection": {
+        "durationMs": 4000,
+        "idrRequests": 1,
+        "codecRestarts": 0,
+        "streamReconnects": 1,
+        "newImagePipelines": 1,
+        "processStable": true,
+        "gameResumed": true,
+        "firmwareKillEvents": 0,
+        "postReconnectIntervals": 556,
+        "postReconnectNormalPercent": 100,
+        "postReconnectMaximumIntervalMs": 17,
+        "legacyEmptyLogEvents": 0
+      }
+    }
   }
 }

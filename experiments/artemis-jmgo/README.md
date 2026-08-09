@@ -1,6 +1,6 @@
 # JMGO Artemis 60 FPS client experiment
 
-This experiment patches Artemis `v20.2.6` (`4de0227fb6ae5c9ad9f7cc486aed7c3571f5f62f`) for the JMGO S901's proprietary `OMX.MS.AVC.Decoder`. It preserves 720p60 or 1080p60 H.264 quality and audio while decoupling the periodic host-delivery and decoder-output bursts that produced visible 90–114 ms freezes.
+This experiment patches Artemis `v20.2.6` (`4de0227fb6ae5c9ad9f7cc486aed7c3571f5f62f`) for the JMGO S901's proprietary `OMX.MS.AVC.Decoder`. It preserves 720p60 or 1080p60 H.264 quality and audio while decoupling the periodic host-delivery and decoder-output bursts that produced visible 90–114 ms freezes, and it self-heals rare terminal presentation starvation.
 
 The debug build installs alongside Artemis as `com.limelight.noirdebug` with the label **JMGO Artemis Lab**.
 
@@ -12,6 +12,7 @@ The solution decouples each blocking boundary with deliberate bounded reserves:
 - MediaCodec input follows that smoothed clock instead of bursty network enqueue timestamps.
 - `OMX.MS.AVC.Decoder` outputs into a 17-slot `YUV_420_888` ImageReader. Its decoded FIFO uses up to 15 slots; the other two cover one image in preparation and listener acquisition headroom.
 - Preparation starts after ten decoded images and fills five copy-ready ImageWriter images.
+- Presentation starvation is staged and bounded: after three empty slots pacing re-buffers, at 100 ms it requests an IDR, at one second it performs at most one MediaCodec restart when native input is still fresh, and at three seconds it recreates the Game activity when decode input or output remains dead. The recreation keeps the task foreground so JMGO firmware cannot kill the client during recovery.
 - An urgent-display pacer anchors once to VSync and then increments a monotonic deadline every 16.67 ms. It queues 15 ms before VSync and requires at least 5 ms of compositor latch margin.
 - Each writer image inherits the decoder's crop rectangle. SurfaceFlinger scales 1280×720 content across the 1920×1080 video layer and presents 1920×1080 content directly, avoiding an uninitialized border in either mode.
 - Plane copies use three direct-buffer JNI calls per frame; native stride-aware `memcpy` is required because Java row copies only reached 45–49 FPS.
@@ -28,6 +29,36 @@ The route baseline remains `150 ms + ((10 decoded + 5 prepared) / 60 FPS) + 15 m
 Audio release deadlines stay monotonic around 415 ms, minus at most 20 ms of filtered writer-wake compensation. After AudioTrack has accepted forty packets, `AudioTrack.getTimestamp()` is sampled every sixteen packets. The first 64 valid samples warm a combined audio-route baseline consisting of ready-queue duration plus sink lead. Later route changes are filtered in sixteenth-steps over a ±2 second range. The controller computes `video depth change - audio route change` and slews `PlaybackParams` between 0.98 and 1.02 in 0.0005 steps while fixing pitch at 1.0. This changes audio phase continuously without moving fixed VSync deadlines or issuing non-monotonic PCM release times.
 
 A 220-of-256 packet pressure threshold is the anti-windup boundary. Crossing it forces the target speed to 1.02; the remaining 36 packets cover the worst speed-slew transition before the queue begins draining. The long-horizon simulation reproduces the rejected 150 ms route-clamp overflow, requires the measured 404 ms video-depth ramp to settle below 164 packets, and checks a ten-minute untrackable phase step without overflow. The controller remains anchored to decoded-audio callback arrival because the Java audio interface does not expose RTP media PTS.
+
+## Starvation recovery
+
+A confirmed idle failure left the urgent-display pacer alive while both decoded and prepared queues remained empty indefinitely. The old client emitted `JMGO prepared image queue empty` at 60 Hz but never re-buffered, requested a keyframe, reset the codec, or reconnected. Host VideoToolbox remained near 60 FPS and the process had no fatal exception or normal connection termination, placing the defect inside the downstream client recovery path.
+
+The watchdog tracks native decode-unit arrival, MediaCodec output, ImageReader acquisition, prepared-image handoff, and presentation separately. It pauses fixed-deadline pacing after three empty presentation slots, then escalates mutually exclusively:
+
+1. Request one IDR at 100 ms.
+2. Restart MediaCodec once at one second only when native decode input is fresh but output/preparation is stale.
+3. Recreate Game once at three seconds when decode input or output is still stale. At most three reconnects are allowed in a rolling 30-second window.
+
+A dead image-preparation worker is also restarted. Recovery requires five prepared images before fixed-period pacing resumes; old 60 Hz empty warnings are replaced by one transition log and one recovery log. Any such event still fails `jmgo-stream-test` because a clean certification run must not need recovery.
+
+The debug APK exposes deterministic injection outside cadence windows:
+
+```bash
+serial="$(jmgo host show):5555"
+
+# Fresh native input with decoded images withheld: IDR, one codec restart, recovery.
+adb -s "$serial" shell am broadcast \
+  -a com.limelight.JMGO_TEST_VIDEO_STARVATION \
+  -p com.limelight.noirdebug --es stage images --ei durationMs 1500
+
+# Native decode input withheld: IDR, no useless codec restart, one Game reconnect.
+adb -s "$serial" shell am broadcast \
+  -a com.limelight.JMGO_TEST_VIDEO_STARVATION \
+  -p com.limelight.noirdebug --es stage input --ei durationMs 4000
+```
+
+Never inject a fault during a clean cadence gate. The image-stage hardware probe recovered once after the injected interval with one codec restart, no reconnect, and a stable process. The input-stage probe issued no codec restart, recreated one stream, kept Game foreground in the same process, initialized a new YUV pipeline, and then presented 556/556 measured intervals at 15–18 ms with a 17 ms maximum.
 
 ## Build
 
@@ -141,12 +172,15 @@ The fixed handoff-aware APK (`875228d3973f280d7ef969ef3698c1e0673f3ce187af076674
 
 The offline dynamic-clock APK (`cb667b0f2bac1261f86b29302083b6f860c11fb99af97fe6b331f1e919b39048`) established the source-timestamp and AudioTimestamp feedback path. The later full-route APK (`ba7b7d4670c530024e0413e0ca7f0f6c12f0fdbf1fde0f8a35ba0c5f4242fae3`) presented all 18,011 five-minute intervals at 15–18 ms with a 17 ms maximum, but was rejected: its obsolete ±150 ms route clamp left playback pinned at 0.98 while video depth reached 404 ms, queued PCM reached 1,270 ms, and the pool logged at least 512 drops.
 
-The installed anti-windup APK (`86b5ba451c06e5cf18111261be0a078499eca32859f182244b7fe4193caf04bf`) expands route feedback to ±2 seconds, uses 256 PCM packets, and forces a +2% drain at 220 packets. It was built for every ABI from a fresh pinned clone; exact Java blob hashes match the generator source, and the direct clock harness plus accelerated five- and ten-minute simulations pass. A 60-second live run presented 3,691/3,691 intervals at 15–18 ms with a 17 ms maximum and zero faults. The convergence-aware 20-second gate then presented 1,222/1,222 intervals, found at most 795 ms queued audio, 10 ms tail phase error, no speed saturation or pressure drain, and zero faults while restoring Dia after Safari setup. First-principles source instrumentation later measured a controlled ten-second run at 60.006 source rAF FPS with no timed source gap, focus loss, hidden event, compositor fault, or pipeline fault. A Dia-foreground twenty-second run independently measured exactly 60 source FPS, 1,236/1,236 normal compositor intervals, at most 525 ms queued audio, 6 ms tail phase error, and zero faults. The page draws a 16-bit frame marker, but downstream pixel decoding remains pending. The final idle five-minute soak remains pending because an interactive host is not a controlled certification environment.
+The pre-watchdog anti-windup APK (`86b5ba451c06e5cf18111261be0a078499eca32859f182244b7fe4193caf04bf`) expands route feedback to ±2 seconds, uses 256 PCM packets, and forces a +2% drain at 220 packets. It was built for every ABI from a fresh pinned clone; exact Java blob hashes match the generator source, and the direct clock harness plus accelerated five- and ten-minute simulations pass. A 60-second live run presented 3,691/3,691 intervals at 15–18 ms with a 17 ms maximum and zero faults. The convergence-aware 20-second gate then presented 1,222/1,222 intervals, found at most 795 ms queued audio, 10 ms tail phase error, no speed saturation or pressure drain, and zero faults while restoring Dia after Safari setup. First-principles source instrumentation later measured a controlled ten-second run at 60.006 source rAF FPS with no timed source gap, focus loss, hidden event, compositor fault, or pipeline fault. A Dia-foreground twenty-second run independently measured exactly 60 source FPS, 1,236/1,236 normal compositor intervals, at most 525 ms queued audio, 6 ms tail phase error, and zero faults. The page draws a 16-bit frame marker, but downstream pixel decoding remains pending.
+
+The deployed self-healing APK (`119c3f84de86d5fe15ca9e0ddebe399a3e1619e4fffe372a8b28b8c6fc3b0542`, version `20.2.6-jmgo.1`) was built for all four ABIs from a fresh pinned clone, matched all nine patched source blobs from the hardware-tested tree, and was verified byte-for-byte after installation. Its clean controlled 60-second gate measured 60.001 source rAF FPS, presented 3,685/3,685 intervals at 15–18 ms with a 17 ms maximum, held tail A/V error to 3 ms, and recorded zero compositor, pipeline, audio, or watchdog faults. The final idle five-minute soak remains pending.
 
 ## Patch layout
 
 - `artemis-v20.2.6.patch` changes the Android client, JNI bridge, audio path, and debug app label.
 - `moonlight-common-c.patch` changes the complete-frame queue and native input presentation clock inside Artemis's submodule.
 - `build` clones the pinned release, applies both patches, builds, and prints the artifact hash.
+- `simulate-video-starvation.mjs` and its tests model the one-shot IDR, codec, and reconnect boundaries and mechanically check the generated patch.
 
 This is hardware-specific experimental code, not a claim that the same latency tradeoff is appropriate for ordinary Moonlight clients.

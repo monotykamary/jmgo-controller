@@ -60,6 +60,7 @@ A passing build must show zero:
 - MediaCodec input stalls
 - decoded image queue replacements
 - decoded image-ring empties or timer delays
+- any `JMGO video starvation` detection, IDR/codec recovery, worker restart, or stream reconnect; self-healing is correct ordinary-use behavior but still invalidates a clean certification window
 - ImageReader/ImageWriter faults
 - audio queue drops, write failures, legacy backlogs, route/video tail error above 75 ms, persistent ±2% speed saturation, pressure-drain activation, or queued audio reaching 1,100 ms
 - projector `WifiTracker` scans during the timed window
