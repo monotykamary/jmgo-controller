@@ -1,8 +1,16 @@
 diff --git a/src/AudioStream.c b/src/AudioStream.c
-index d14d572..c9c865b 100644
+index d14d57257049cddc76e63eb76a309d66c5c73683..c7b5e01be129dd90d633681bb60cfe4b4a4e7f19 100644
 --- a/src/AudioStream.c
 +++ b/src/AudioStream.c
-@@ -66,7 +66,7 @@ static void AudioPingThreadProc(void* context) {
+@@ -17,6 +17,7 @@ static unsigned short lastSeq;
+ static bool pingThreadStarted;
+ static bool receivedDataFromPeer;
+ static uint64_t firstReceiveTime;
++static uint32_t currentAudioPresentationTimeMs;
+ 
+ #ifdef LC_DEBUG
+ #define INVALID_OPUS_HEADER 0x00
+@@ -66,12 +67,13 @@ static void AudioPingThreadProc(void* context) {
  
  // Initialize the audio stream and start
  int initializeAudioStream(void) {
@@ -11,8 +19,54 @@ index d14d572..c9c865b 100644
      RtpaInitializeQueue(&rtpAudioQueue);
      lastSeq = 0;
      receivedDataFromPeer = false;
+     pingThreadStarted = false;
+     firstReceiveTime = 0;
++    currentAudioPresentationTimeMs = 0;
+     audioDecryptionCtx = PltCreateCryptoContext();
+ #ifdef LC_DEBUG
+     opusHeaderByte = INVALID_OPUS_HEADER;
+@@ -159,11 +161,16 @@ static bool queuePacketToLbq(PQUEUED_AUDIO_PACKET* packet) {
+     return err == LBQ_SUCCESS;
+ }
+ 
++uint32_t LiGetCurrentAudioPresentationTime(void) {
++    return currentAudioPresentationTimeMs;
++}
++
+ static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
+     // If the packet size is zero, this is a placeholder for a missing
+     // packet. Trigger packet loss concealment logic in libopus by
+     // invoking the decoder with a NULL buffer.
+     if (packet->header.size == 0) {
++        currentAudioPresentationTimeMs += AudioPacketDuration;
+         AudioCallbacks.decodeAndPlaySample(NULL, 0);
+         return;
+     }
+@@ -174,6 +181,7 @@ static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
+     }
+ 
+     lastSeq = rtp->sequenceNumber;
++    currentAudioPresentationTimeMs = rtp->timestamp;
+ 
+     if (AudioEncryptionEnabled) {
+         // We must have room for the AES padding which may be written to the buffer
+diff --git a/src/Limelight.h b/src/Limelight.h
+index 950065b6f32c6eb783f366c62027b539d33184c1..05e7267bf8ffeae25d844ebc233eaf04d2dc0880 100644
+--- a/src/Limelight.h
++++ b/src/Limelight.h
+@@ -859,6 +859,10 @@ int LiGetPendingAudioFrames(void);
+ // negotiated audio frame duration.
+ int LiGetPendingAudioDuration(void);
+ 
++// Returns the RTP presentation timestamp for the audio packet currently being
++// submitted to the renderer. Sunshine timestamps use milliseconds.
++uint32_t LiGetCurrentAudioPresentationTime(void);
++
+ // Port index flags for use with LiGetPortFromPortFlagIndex() and LiGetProtocolFromPortFlagIndex()
+ #define ML_PORT_INDEX_TCP_47984 0
+ #define ML_PORT_INDEX_TCP_47989 1
 diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
-index b5321c1..011bb21 100644
+index b5321c1505307e692a8bf6aa89c0c2cdc148d179..011bb21e80acb3c1a33f105cafa07d7ee8743b3c 100644
 --- a/src/VideoDepacketizer.c
 +++ b/src/VideoDepacketizer.c
 @@ -59,7 +59,7 @@ typedef struct _LENTRY_INTERNAL {
@@ -25,14 +79,14 @@ index b5321c1..011bb21 100644
      nextFrameNumber = 1;
      startFrameNumber = 0;
 diff --git a/src/VideoStream.c b/src/VideoStream.c
-index a2def84..5c25dd4 100644
+index a2def84e390c70245644d2e3cd0fcebffacf40f0..17a31f49728551f10d8b1b2db9a618b932a8ef5c 100644
 --- a/src/VideoStream.c
 +++ b/src/VideoStream.c
 @@ -253,6 +253,13 @@ void notifyKeyFrameReceived(void) {
  
  // Decoder thread proc
  static void VideoDecoderThreadProc(void* context) {
-+    const uint64_t presentationLeadMs = 150;
++    const uint64_t presentationLeadMs = 125;
 +    uint64_t baseLocalTimeMs = 0;
 +    uint32_t basePresentationTimeMs = 0;
 +    uint32_t lastPresentationTimeMs = 0;

@@ -12,6 +12,13 @@ const avsyncParser = join(
   "scripts",
   "parse-avsync-log.mjs",
 );
+const latencyParser = join(
+  process.cwd(),
+  "skills",
+  "jmgo-stream-test",
+  "scripts",
+  "parse-latency-log.mjs",
+);
 const motionParser = join(
   process.cwd(),
   "skills",
@@ -27,34 +34,80 @@ const freezeParser = join(
   "parse-freeze-report.mjs",
 );
 
-function telemetry(
-  queuedAudioMs: number,
-  routeChangeMs: number,
-  queueDrain: boolean,
-  videoDepthChangeMs: number,
-  playbackSpeed: number,
-): string {
+function telemetry({
+  timelineActive,
+  videoHoldbackMs,
+  writeHoldbackMs,
+  sinkLeadMs,
+  queuedAudioMs,
+  phaseErrorMs,
+  deadlineCorrectionMs,
+  queueDrain,
+  videoDepthChangeMs,
+  playbackSpeed,
+  audioMediaMs = 10_000,
+  videoMediaMs = 9_300,
+  desiredLeadMs = 700,
+  readyFrames = 20,
+}: {
+  timelineActive: boolean;
+  videoHoldbackMs: number;
+  writeHoldbackMs: number;
+  sinkLeadMs: number;
+  queuedAudioMs: number;
+  phaseErrorMs: number;
+  deadlineCorrectionMs: number;
+  queueDrain: boolean;
+  videoDepthChangeMs: number;
+  playbackSpeed: number;
+  audioMediaMs?: number;
+  videoMediaMs?: number;
+  desiredLeadMs?: number;
+  readyFrames?: number;
+}): string {
   return [
-    "I/com.limelight.LimeLog: JMGO dynamic audio holdback: 395 ms",
+    `I/com.limelight.LimeLog: JMGO media audio sync: timeline=${timelineActive}`,
+    `video holdback: ${videoHoldbackMs} ms`,
+    `write holdback: ${writeHoldbackMs} ms`,
+    "scheduler compensation: 2 ms",
+    `sink lead: ${sinkLeadMs} ms`,
     `queued audio: ${queuedAudioMs} ms`,
-    `route change: ${routeChangeMs} ms`,
+    `phase error: ${phaseErrorMs} ms`,
+    `deadline correction: ${deadlineCorrectionMs} ms`,
     `queue drain: ${queueDrain}`,
     `video depth change: ${videoDepthChangeMs} ms`,
     `playback speed: ${playbackSpeed}`,
+    `audio media: ${audioMediaMs} ms`,
+    `video media: ${videoMediaMs} ms`,
+    `desired lead: ${desiredLeadMs} ms`,
+    `ready frames: ${readyFrames}`,
   ].join(", ");
 }
 
-test("A/V telemetry parser accepts convergence and rejects saturation", async () => {
+const baseTelemetry = {
+  timelineActive: true,
+  videoHoldbackMs: 390,
+  writeHoldbackMs: 90,
+  sinkLeadMs: 300,
+  queuedAudioMs: 100,
+  phaseErrorMs: 3,
+  deadlineCorrectionMs: 10,
+  queueDrain: false,
+  videoDepthChangeMs: 0,
+  playbackSpeed: 1,
+};
+
+test("A/V telemetry parser accepts shared-media convergence and rejects drift", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jmgo-avsync-log-test-"));
   try {
     const convergedPath = join(directory, "converged.log");
     await writeFile(
       convergedPath,
       [
-        telemetry(410, 0, false, 0, 1),
-        telemetry(470, 70, false, 90, 0.998),
-        telemetry(500, 105, false, 120, 0.999),
-        telemetry(515, 120, false, 128, 1.0004),
+        telemetry({ ...baseTelemetry, timelineActive: false, queuedAudioMs: 100, phaseErrorMs: 50 }),
+        telemetry({ ...baseTelemetry, queuedAudioMs: 110, phaseErrorMs: 20 }),
+        telemetry({ ...baseTelemetry, queuedAudioMs: 105, phaseErrorMs: 8 }),
+        telemetry({ ...baseTelemetry, queuedAudioMs: 100, phaseErrorMs: 3 }),
       ].join("\n"),
     );
     const converged = spawnSync(process.execPath, [avsyncParser, convergedPath], {
@@ -64,9 +117,18 @@ test("A/V telemetry parser accepts convergence and rejects saturation", async ()
     assert.deepEqual(JSON.parse(converged.stdout), {
       available: true,
       samples: 4,
-      maximumQueuedAudioMs: 515,
-      queueGrowthMs: 35,
+      minimumVideoHoldbackMs: 390,
+      maximumVideoHoldbackMs: 390,
+      maximumWriteHoldbackMs: 90,
+      maximumQueuedAudioMs: 110,
+      queueGrowthMs: 0,
+      timestampedSamples: 4,
+      maximumAudioVideoMediaLeadMs: 700,
+      maximumDesiredLeadMs: 700,
+      maximumQueueBudgetExcessMs: 0,
       tailMaximumPhaseErrorMs: 20,
+      tailDeadlineCorrectionMs: 10,
+      tailTimelineActive: true,
       tailSpeedSaturated: false,
       queueDrainSamples: 0,
       failureReasons: [],
@@ -77,31 +139,170 @@ test("A/V telemetry parser accepts convergence and rejects saturation", async ()
     await writeFile(
       saturatedPath,
       [
-        telemetry(1_150, 150, true, 404, 0.98),
-        telemetry(1_230, 150, true, 404, 0.98),
-        telemetry(1_270, 150, true, 404, 0.98),
+        telemetry({ ...baseTelemetry, timelineActive: false, queuedAudioMs: 520, phaseErrorMs: 80, queueDrain: true, playbackSpeed: 0.98 }),
+        telemetry({ ...baseTelemetry, timelineActive: false, queuedAudioMs: 540, phaseErrorMs: 90, queueDrain: true, playbackSpeed: 0.98 }),
+        telemetry({ ...baseTelemetry, timelineActive: false, queuedAudioMs: 560, phaseErrorMs: 100, queueDrain: true, playbackSpeed: 0.98 }),
       ].join("\n"),
     );
     const saturated = spawnSync(process.execPath, [avsyncParser, saturatedPath], {
       encoding: "utf8",
     });
     assert.equal(saturated.status, 1);
+    const mediaBudgetPath = join(directory, "media-budget.log");
+    await writeFile(
+      mediaBudgetPath,
+      [
+        telemetry({
+          ...baseTelemetry,
+          sinkLeadMs: 290,
+          queuedAudioMs: 535,
+          phaseErrorMs: 8,
+          audioMediaMs: 20_000,
+          videoMediaMs: 19_200,
+          desiredLeadMs: 810,
+        }),
+        telemetry({
+          ...baseTelemetry,
+          sinkLeadMs: 290,
+          queuedAudioMs: 530,
+          phaseErrorMs: 6,
+          audioMediaMs: 25_000,
+          videoMediaMs: 24_200,
+          desiredLeadMs: 810,
+        }),
+        telemetry({
+          ...baseTelemetry,
+          sinkLeadMs: 290,
+          queuedAudioMs: 533,
+          phaseErrorMs: 4,
+          audioMediaMs: 30_000,
+          videoMediaMs: 29_200,
+          desiredLeadMs: 810,
+        }),
+      ].join("\n"),
+    );
+    const mediaBudget = spawnSync(process.execPath, [avsyncParser, mediaBudgetPath], {
+      encoding: "utf8",
+    });
+    assert.equal(mediaBudget.status, 0, mediaBudget.stderr);
+    assert.equal(JSON.parse(mediaBudget.stdout).maximumQueueBudgetExcessMs, 15);
+    assert.equal(JSON.parse(mediaBudget.stdout).tailMaximumPhaseErrorMs, 8);
+    assert.equal(JSON.parse(mediaBudget.stdout).passed, true);
+
     assert.deepEqual(JSON.parse(saturated.stdout), {
       available: true,
       samples: 3,
-      maximumQueuedAudioMs: 1270,
+      minimumVideoHoldbackMs: 390,
+      maximumVideoHoldbackMs: 390,
+      maximumWriteHoldbackMs: 90,
+      maximumQueuedAudioMs: 560,
       queueGrowthMs: 0,
-      tailMaximumPhaseErrorMs: 254,
+      timestampedSamples: 3,
+      maximumAudioVideoMediaLeadMs: null,
+      maximumDesiredLeadMs: null,
+      maximumQueueBudgetExcessMs: null,
+      tailMaximumPhaseErrorMs: 100,
+      tailDeadlineCorrectionMs: 10,
+      tailTimelineActive: false,
       tailSpeedSaturated: true,
       queueDrainSamples: 3,
       failureReasons: [
+        "shared-media-timeline-inactive",
         "audio-queue-drain-active",
-        "audio-queue-near-capacity",
-        "audio-route-divergence",
+        "audio-queue-too-deep",
+        "audio-media-phase-divergence",
         "audio-speed-saturated",
       ],
       passed: false,
     });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function latencyTelemetry({
+  holdback = 390,
+  decoded = "4-12",
+  prepared = "4-5",
+  preparation = 4,
+  writer = 2,
+  margin = 7,
+  unique = 300,
+  repeated = 0,
+  skipped = 0,
+  synthetic = 0,
+} = {}): string {
+  return [
+    `I/com.limelight.LimeLog: JMGO latency telemetry: video holdback=${holdback} ms`,
+    `decoded=${decoded}`,
+    `prepared=${prepared}`,
+    `prepare max=${preparation} ms`,
+    `writer max=${writer} ms`,
+    `handoff margin min=${margin} ms`,
+    `marker unique=${unique}`,
+    `repeated=${repeated}`,
+    `skipped=${skipped}`,
+    `synthetic coalesced=${synthetic}`,
+  ].join(", ");
+}
+
+test("latency telemetry parser enforces marker and handoff headroom", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jmgo-latency-log-test-"));
+  try {
+    const passingPath = join(directory, "passing.log");
+    await writeFile(passingPath, [latencyTelemetry(), latencyTelemetry()].join("\n"));
+    const passing = spawnSync(process.execPath, [latencyParser, passingPath], {
+      encoding: "utf8",
+    });
+    assert.equal(passing.status, 0, passing.stderr);
+    const passingResult = JSON.parse(passing.stdout);
+    assert.equal(passingResult.markerUniqueFrames, 600);
+    assert.equal(passingResult.minimumHandoffMarginMs, 7);
+    assert.equal(passingResult.passed, true);
+
+    const boundedResamplingPath = join(directory, "bounded-resampling.log");
+    await writeFile(
+      boundedResamplingPath,
+      latencyTelemetry({ unique: 300, repeated: 20, skipped: 20 }),
+    );
+    const boundedResampling = spawnSync(
+      process.execPath,
+      [latencyParser, boundedResamplingPath],
+      { encoding: "utf8" },
+    );
+    assert.equal(boundedResampling.status, 0, boundedResampling.stderr);
+    assert.equal(JSON.parse(boundedResampling.stdout).markerResamplingEvents, 40);
+
+    const excessiveResamplingPath = join(directory, "excessive-resampling.log");
+    await writeFile(
+      excessiveResamplingPath,
+      latencyTelemetry({ unique: 300, repeated: 21, skipped: 21 }),
+    );
+    const excessiveResampling = spawnSync(
+      process.execPath,
+      [latencyParser, excessiveResamplingPath],
+      { encoding: "utf8" },
+    );
+    assert.equal(excessiveResampling.status, 1);
+    assert.deepEqual(JSON.parse(excessiveResampling.stdout).failureReasons, [
+      "source-frame-resampling",
+    ]);
+
+    const failingPath = join(directory, "failing.log");
+    await writeFile(
+      failingPath,
+      latencyTelemetry({ repeated: 3, preparation: 31, writer: 12, margin: 4 }),
+    );
+    const failing = spawnSync(process.execPath, [latencyParser, failingPath], {
+      encoding: "utf8",
+    });
+    assert.equal(failing.status, 1);
+    assert.deepEqual(JSON.parse(failing.stdout).failureReasons, [
+      "source-frame-continuity",
+      "handoff-margin-below-5-ms",
+      "image-preparation-at-least-30-ms",
+      "image-writer-at-least-12-ms",
+    ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -196,6 +397,22 @@ test("motion parser separates healthy interaction from focus loss and rAF thrott
     elapsedMs: 3000,
     lastEpochMs: 10203000,
   });
+  const boundedJitterEnd = motionTitle({
+    frame: 1380,
+    elapsedMs: 23000,
+    maximumGapMs: 53,
+    gapEvents34Ms: 1,
+    lastEpochMs: 10230000,
+  });
+  const boundedJitter = runMotionParser(
+    controlledStart,
+    boundedJitterEnd,
+    "controlled",
+  );
+  assert.equal(boundedJitter.status, 0, boundedJitter.stderr);
+  assert.equal(JSON.parse(boundedJitter.stdout).gapEvents34Ms, 1);
+  assert.equal(JSON.parse(boundedJitter.stdout).passed, true);
+
   const focusLostEnd = motionTitle({
     frame: 1380,
     elapsedMs: 23000,
@@ -208,13 +425,15 @@ test("motion parser separates healthy interaction from focus loss and rAF thrott
   assert.ok(JSON.parse(focusLost.stdout).failureReasons.includes("controlled-focus-event"));
   assert.equal(JSON.parse(focusLost.stdout).passed, false);
 
-  const wrongFocus = runMotionParser(controlledStart, healthyEnd, "controlled", "Dia");
-  assert.equal(wrongFocus.status, 1);
-  assert.equal(JSON.parse(wrongFocus.stdout).focusEndApp, "Dia");
-  assert.ok(
-    JSON.parse(wrongFocus.stdout).failureReasons.includes("controlled-focus-boundary"),
+  const wrongGlobalFocus = runMotionParser(
+    controlledStart,
+    boundedJitterEnd,
+    "controlled",
+    "Dia",
   );
-  assert.equal(JSON.parse(wrongFocus.stdout).passed, false);
+  assert.equal(wrongGlobalFocus.status, 0, wrongGlobalFocus.stderr);
+  assert.equal(JSON.parse(wrongGlobalFocus.stdout).focusEndApp, "Dia");
+  assert.equal(JSON.parse(wrongGlobalFocus.stdout).passed, true);
 
   const throttledEnd = motionTitle({
     frame: 200,

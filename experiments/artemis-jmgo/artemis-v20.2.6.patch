@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle b/app/build.gradle
-index c706dbf..2f096e0 100644
+index c706dbff844f9cbed90ad58d662a9be3b2b3667c..ee34c3edd011832ec95345092ff53643d3b9e9c0 100644
 --- a/app/build.gradle
 +++ b/app/build.gradle
 @@ -96,7 +96,8 @@ android {
@@ -7,13 +7,13 @@ index c706dbf..2f096e0 100644
          debug {
              applicationIdSuffix ".noirdebug"
 -            resValue "string", "app_label", "Diana"
-+            versionNameSuffix "-jmgo.1"
++            versionNameSuffix "-jmgo.3"
 +            resValue "string", "app_label", "JMGO Artemis Lab"
              resValue "string", "app_label_root", "Diana (Root)"
              resValue "string", "app_label_game", "Diana (Game)"
  
 diff --git a/app/src/main/java/com/limelight/Game.java b/app/src/main/java/com/limelight/Game.java
-index 23704cf..8bd283a 100755
+index 23704cf946c8e6fa10162fcc7c8a615700c58e65..8bd283acf311c73b7958fe1f3c58cd6bb1c95d0a 100755
 --- a/app/src/main/java/com/limelight/Game.java
 +++ b/app/src/main/java/com/limelight/Game.java
 @@ -28,6 +28,7 @@ import com.limelight.binding.video.CrashListener;
@@ -172,7 +172,7 @@ index 23704cf..8bd283a 100755
  
      public static String formatCurrentTime(long currentTimeMillis) {
 diff --git a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
-index 53cbf68..8419b02 100755
+index 53cbf6879a841febe42e7074099570b01e9a5778..ef6f066c75048a5b7059aa14a340371dd3e6a3d3 100755
 --- a/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java
 @@ -5,11 +5,18 @@ import android.content.Intent;
@@ -194,16 +194,21 @@ index 53cbf68..8419b02 100755
  import com.limelight.nvstream.av.audio.AudioRenderer;
  import com.limelight.nvstream.jni.MoonBridge;
  
-@@ -19,6 +26,36 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -19,6 +26,43 @@ public class AndroidAudioRenderer implements AudioRenderer {
      private final boolean enableAudioFx;
  
      private AudioTrack track;
 +    private static final int JMGO_AUDIO_BUFFER_FRAMES = 40;
 +    private static final int JMGO_AUDIO_QUEUE_FRAMES = 256;
 +    private static final int JMGO_AUDIO_QUEUE_DRAIN_FRAMES = 220;
++    private static final long JMGO_AUDIO_DEADLINE_MAXIMUM_STEP_NS = 100_000L;
++    private static final long JMGO_AUDIO_DEADLINE_REBASE_NS = 100_000_000L;
++    private static final long JMGO_AUDIO_TIMELINE_DISCONTINUITY_MS = 100;
 +
 +    private static final class JmgoAudioFrame {
 +        final short[] samples;
++        long receivedAtNs;
++        long mediaPresentationTimeMs;
 +        long releaseTimeNs;
 +
 +        JmgoAudioFrame(int sampleCount) {
@@ -220,6 +225,8 @@ index 53cbf68..8419b02 100755
 +    private long audioQueueDrops;
 +    private long lastAudioSyncLogNs;
 +    private long lastAudioReleaseTimeNs;
++    private long lastAudioReleaseMediaTimeMs;
++    private boolean lastAudioTimelineActive;
 +    private float lastAudioPlaybackSpeed = 1.0f;
 +    private boolean audioPlaybackSpeedUnavailable;
 +    private final AudioTimestamp audioTimestamp = new AudioTimestamp();
@@ -231,7 +238,7 @@ index 53cbf68..8419b02 100755
  
      public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
          this.context = context;
-@@ -147,6 +184,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -147,6 +191,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
                      throw new IllegalStateException();
              }
  
@@ -242,7 +249,7 @@ index 53cbf68..8419b02 100755
              // Skip low latency options if hardware sample rate doesn't match the content
              if (AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC) != sampleRate && lowLatency) {
                  continue;
-@@ -182,25 +223,173 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -182,25 +230,226 @@ public class AndroidAudioRenderer implements AudioRenderer {
              return -2;
          }
  
@@ -260,6 +267,8 @@ index 53cbf68..8419b02 100755
 +        audioQueueDrops = 0;
 +        lastAudioSyncLogNs = 0;
 +        lastAudioReleaseTimeNs = 0;
++        lastAudioReleaseMediaTimeMs = -1;
++        lastAudioTimelineActive = false;
 +        lastAudioPlaybackSpeed = 1.0f;
 +        audioPlaybackSpeedUnavailable = false;
 +        JmgoAvSyncClock.resetAudioFeedback();
@@ -268,13 +277,14 @@ index 53cbf68..8419b02 100755
      }
  
      @Override
-     public void playDecodedAudio(short[] audioData) {
+-    public void playDecodedAudio(short[] audioData) {
 -        // Only queue up to 40 ms of pending audio data in addition to what AudioTrack is buffering for us.
 -        if (MoonBridge.getPendingAudioDuration() < 40) {
 -            // This will block until the write is completed. That can cause a backlog
 -            // of pending audio data, so we do the above check to be able to bound
 -            // latency at 40 ms in that situation.
 -            track.write(audioData, 0, audioData.length);
++    public void playDecodedAudio(short[] audioData, long presentationTimeMs) {
 +        JmgoAudioFrame frame = freeAudioFrames.poll();
 +        if (frame == null) {
 +            frame = readyAudioFrames.poll();
@@ -291,26 +301,73 @@ index 53cbf68..8419b02 100755
 +
 +        System.arraycopy(audioData, 0, frame.samples, 0, audioData.length);
 +        long nowNs = System.nanoTime();
-+        long releaseTimeNs = nowNs + JmgoAvSyncClock.getAudioHoldbackNs();
-+        frame.releaseTimeNs = Math.max(releaseTimeNs, lastAudioReleaseTimeNs + 1);
++        long releaseTimeNs = JmgoAvSyncClock.getAudioReleaseDeadlineNs(
++                presentationTimeMs, nowNs);
++        boolean timelineActive = JmgoAvSyncClock.isMediaTimelineActive(
++                presentationTimeMs, nowNs);
++        if (lastAudioReleaseMediaTimeMs >= 0) {
++            long mediaDeltaMs = presentationTimeMs - lastAudioReleaseMediaTimeMs;
++            long expectedReleaseTimeNs = lastAudioReleaseTimeNs +
++                    mediaDeltaMs * 1_000_000L;
++            long correctionNs = releaseTimeNs - expectedReleaseTimeNs;
++            boolean mediaContinuous = mediaDeltaMs > 0 &&
++                    mediaDeltaMs <= JMGO_AUDIO_TIMELINE_DISCONTINUITY_MS;
++            boolean deadlineContinuous = Math.abs(correctionNs) <
++                    JMGO_AUDIO_DEADLINE_REBASE_NS;
++            if (mediaContinuous && deadlineContinuous &&
++                    expectedReleaseTimeNs >= nowNs &&
++                    timelineActive == lastAudioTimelineActive) {
++                correctionNs = Math.max(-JMGO_AUDIO_DEADLINE_MAXIMUM_STEP_NS,
++                        Math.min(correctionNs, JMGO_AUDIO_DEADLINE_MAXIMUM_STEP_NS));
++                releaseTimeNs = expectedReleaseTimeNs + correctionNs;
++            }
++            else if (!mediaContinuous) {
++                LimeLog.warning("JMGO audio media timeline rebased: delta=" +
++                        mediaDeltaMs + " ms");
++            }
++            else if (!deadlineContinuous ||
++                    timelineActive != lastAudioTimelineActive) {
++                LimeLog.info("JMGO audio release deadline rebased: correction=" +
++                        (correctionNs / 1_000_000L) + " ms, timeline=" +
++                        timelineActive);
++            }
++        }
++        lastAudioTimelineActive = timelineActive;
++        frame.receivedAtNs = nowNs;
++        frame.mediaPresentationTimeMs = presentationTimeMs;
++        frame.releaseTimeNs = Math.max(nowNs, releaseTimeNs);
 +        lastAudioReleaseTimeNs = frame.releaseTimeNs;
++        lastAudioReleaseMediaTimeMs = presentationTimeMs;
 +        if (nowNs - lastAudioSyncLogNs >= 5_000_000_000L) {
-+            LimeLog.info("JMGO dynamic audio holdback: " +
-+                    (JmgoAvSyncClock.getAudioHoldbackNs() / 1_000_000L) +
++            LimeLog.info("JMGO media audio sync: timeline=" +
++                    JmgoAvSyncClock.isMediaTimelineActive(presentationTimeMs, nowNs) +
++                    ", video holdback: " +
++                    (JmgoAvSyncClock.getVideoHoldbackNs(nowNs) / 1_000_000L) +
++                    " ms, write holdback: " +
++                    ((frame.releaseTimeNs - nowNs) / 1_000_000L) +
 +                    " ms, scheduler compensation: " +
 +                    (JmgoAvSyncClock.getSchedulerCompensationNs() / 1_000_000L) +
 +                    " ms, sink lead: " +
 +                    (JmgoAvSyncClock.getAudioSinkLeadNs() / 1_000_000L) +
 +                    " ms, queued audio: " +
 +                    (JmgoAvSyncClock.getAudioQueueLeadNs() / 1_000_000L) +
-+                    " ms, route change: " +
-+                    (JmgoAvSyncClock.getAudioRouteAdjustmentNs() / 1_000_000L) +
++                    " ms, phase error: " +
++                    (JmgoAvSyncClock.getAudioPhaseErrorNs() / 1_000_000L) +
++                    " ms, deadline correction: " +
++                    (JmgoAvSyncClock.getAudioDeadlineCorrectionNs() / 1_000_000L) +
 +                    " ms, queue drain: " +
 +                    (readyAudioFrames.size() >= JMGO_AUDIO_QUEUE_DRAIN_FRAMES) +
 +                    ", video depth change: " +
 +                    (JmgoAvSyncClock.getVideoDepthChangeNs(nowNs) / 1_000_000L) +
 +                    " ms, playback speed: " +
-+                    JmgoAvSyncClock.getCurrentAudioPlaybackSpeed());
++                    JmgoAvSyncClock.getCurrentAudioPlaybackSpeed() +
++                    ", audio media: " + presentationTimeMs +
++                    " ms, video media: " +
++                    JmgoAvSyncClock.getLatestVideoMediaTimeMs() +
++                    " ms, desired lead: " +
++                    ((JmgoAvSyncClock.getDesiredAudioPresentationNs(
++                            presentationTimeMs, nowNs) - nowNs) / 1_000_000L) +
++                    " ms, ready frames: " + readyAudioFrames.size());
 +            lastAudioSyncLogNs = nowNs;
 +        }
 +        if (!readyAudioFrames.offer(frame)) {
@@ -333,26 +390,30 @@ index 53cbf68..8419b02 100755
 +        long queuedFrames = firstFramePosition - audioTimestamp.framePosition;
 +        if (queuedFrames < 0) {
 +            return;
-+        }
+         }
 +
++        double effectiveSampleRate = configuredSampleRate *
++                Math.max(0.98f, lastAudioPlaybackSpeed);
 +        long firstFramePresentationNs = audioTimestamp.nanoTime +
-+                queuedFrames * 1_000_000_000L / configuredSampleRate;
++                (long) (queuedFrames * 1_000_000_000L / effectiveSampleRate);
 +        long nowNs = System.nanoTime();
 +        long measuredSinkLeadNs = firstFramePresentationNs - nowNs;
 +        long measuredQueueLeadNs = readyAudioFrames.size() * audioPacketDurationNs;
-+        JmgoAvSyncClock.updateAudioRouteLead(
-+                measuredSinkLeadNs, measuredQueueLeadNs);
-+        updateAudioPlaybackSpeed(nowNs);
++        JmgoAvSyncClock.updateAudioPresentation(
++                frame.mediaPresentationTimeMs, frame.receivedAtNs,
++                firstFramePresentationNs, measuredSinkLeadNs,
++                measuredQueueLeadNs, nowNs);
++        updateAudioPlaybackSpeed();
 +    }
 +
-+    private void updateAudioPlaybackSpeed(long nowNs) {
++    private void updateAudioPlaybackSpeed() {
 +        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
 +                audioPlaybackSpeedUnavailable) {
 +            return;
 +        }
 +
 +        float speed = JmgoAvSyncClock.getAudioPlaybackSpeed(
-+                nowNs, readyAudioFrames.size() >= JMGO_AUDIO_QUEUE_DRAIN_FRAMES);
++                readyAudioFrames.size() >= JMGO_AUDIO_QUEUE_DRAIN_FRAMES);
 +        if (Math.abs(speed - lastAudioPlaybackSpeed) < 0.0001f) {
 +            return;
 +        }
@@ -369,9 +430,9 @@ index 53cbf68..8419b02 100755
 +            audioPlaybackSpeedUnavailable = true;
 +            LimeLog.warning("JMGO AudioTrack playback speed unavailable: " +
 +                    e.getMessage());
-         }
-     }
- 
++        }
++    }
++
 +    private void startAudioWriter() {
 +        audioStopping = false;
 +        audioWriterThread = new Thread(() -> {
@@ -416,15 +477,15 @@ index 53cbf68..8419b02 100755
 +                (JmgoAvSyncClock.getBaselineHoldbackNs() / 1_000_000L) +
 +                " ms audio baseline");
 +        audioWriterThread.start();
-+    }
-+
+     }
+ 
      @Override
      public void start() {
 +        startAudioWriter();
          if (enableAudioFx) {
              // Open an audio effect control session to allow equalizers to apply audio effects
              Intent i = new Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
-@@ -213,6 +402,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
+@@ -213,6 +462,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
  
      @Override
      public void stop() {
@@ -445,285 +506,27 @@ index 53cbf68..8419b02 100755
          if (enableAudioFx) {
              // Close our audio effect control session when we're stopping
              Intent i = new Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
-diff --git a/app/src/main/java/com/limelight/binding/av/JmgoAvSyncClock.java b/app/src/main/java/com/limelight/binding/av/JmgoAvSyncClock.java
-new file mode 100644
-index 0000000..bccbda9
---- /dev/null
-+++ b/app/src/main/java/com/limelight/binding/av/JmgoAvSyncClock.java
-@@ -0,0 +1,255 @@
-+package com.limelight.binding.av;
-+
-+import java.util.concurrent.atomic.AtomicLong;
-+
-+public final class JmgoAvSyncClock {
-+    private static final long NANOS_PER_MILLISECOND = 1_000_000L;
-+    private static final long NANOS_PER_SECOND = 1_000_000_000L;
-+    private static final long VIDEO_INPUT_LEAD_NS = 150 * NANOS_PER_MILLISECOND;
-+    private static final int FALLBACK_DECODED_IMAGES = 10;
-+    private static final int FALLBACK_PREPARED_IMAGES = 5;
-+    private static final int STREAM_FRAMES_PER_SECOND = 60;
-+    private static final long PRESENTATION_HANDOFF_LEAD_NS = 15 * NANOS_PER_MILLISECOND;
-+    private static final long BASELINE_HOLDBACK_NS =
-+            VIDEO_INPUT_LEAD_NS +
-+            (FALLBACK_DECODED_IMAGES + FALLBACK_PREPARED_IMAGES) *
-+                    NANOS_PER_SECOND / STREAM_FRAMES_PER_SECOND +
-+            PRESENTATION_HANDOFF_LEAD_NS;
-+    private static final long MINIMUM_VIDEO_HOLDBACK_NS =
-+            VIDEO_INPUT_LEAD_NS +
-+            5 * NANOS_PER_SECOND / STREAM_FRAMES_PER_SECOND +
-+            PRESENTATION_HANDOFF_LEAD_NS;
-+    private static final long MAXIMUM_VIDEO_HOLDBACK_NS =
-+            VIDEO_INPUT_LEAD_NS +
-+            30 * NANOS_PER_SECOND / STREAM_FRAMES_PER_SECOND +
-+            PRESENTATION_HANDOFF_LEAD_NS;
-+    private static final long MAXIMUM_SCHEDULER_COMPENSATION_NS = 20 * NANOS_PER_MILLISECOND;
-+    private static final long MINIMUM_AUDIO_ROUTE_ADJUSTMENT_NS =
-+            -2 * NANOS_PER_SECOND;
-+    private static final long MAXIMUM_AUDIO_ROUTE_ADJUSTMENT_NS =
-+            2 * NANOS_PER_SECOND;
-+    private static final long PLAYBACK_SPEED_SCALE = 1_000_000L;
-+    private static final long MINIMUM_PLAYBACK_SPEED = 980_000L;
-+    private static final long MAXIMUM_PLAYBACK_SPEED = 1_020_000L;
-+    private static final long MAXIMUM_PLAYBACK_SPEED_STEP = 500L;
-+    private static final long PLAYBACK_SPEED_ERROR_DIVISOR = 5_000L;
-+    private static final long MAXIMUM_SINK_LEAD_NS = 500 * NANOS_PER_MILLISECOND;
-+    private static final long MAXIMUM_AUDIO_QUEUE_LEAD_NS = 2 * NANOS_PER_SECOND;
-+    private static final long VIDEO_CLOCK_STALE_NS = NANOS_PER_SECOND;
-+    private static final long VIDEO_REBASE_THRESHOLD_NS = 100 * NANOS_PER_MILLISECOND;
-+    private static final long VIDEO_BASELINE_SAMPLES = 60;
-+    private static final long AUDIO_ROUTE_BASELINE_SAMPLES = 64;
-+    private static final int VIDEO_FILTER_SHIFT = 3;
-+    private static final int SCHEDULER_FILTER_SHIFT = 4;
-+    private static final int SINK_FILTER_SHIFT = 4;
-+
-+    private static final AtomicLong videoHoldbackNs =
-+            new AtomicLong(BASELINE_HOLDBACK_NS);
-+    private static final AtomicLong videoBaselineHoldbackNs = new AtomicLong(-1);
-+    private static final AtomicLong videoBaselineSamples = new AtomicLong();
-+    private static final AtomicLong videoUpdatedAtNs = new AtomicLong();
-+    private static final AtomicLong schedulerCompensationNs = new AtomicLong();
-+    private static final AtomicLong appliedPlaybackSpeed =
-+            new AtomicLong(PLAYBACK_SPEED_SCALE);
-+    private static final AtomicLong audioRouteBaselineLeadNs = new AtomicLong(-1);
-+    private static final AtomicLong audioRouteBaselineSamples = new AtomicLong();
-+    private static final AtomicLong audioRouteAdjustmentNs = new AtomicLong();
-+    private static final AtomicLong sinkLeadNs = new AtomicLong();
-+    private static final AtomicLong audioQueueLeadNs = new AtomicLong();
-+
-+    private JmgoAvSyncClock() {}
-+
-+    public static void resetVideoClock() {
-+        videoHoldbackNs.set(BASELINE_HOLDBACK_NS);
-+        videoBaselineHoldbackNs.set(-1);
-+        videoBaselineSamples.set(0);
-+        videoUpdatedAtNs.set(0);
-+    }
-+
-+    public static void resetAudioFeedback() {
-+        schedulerCompensationNs.set(0);
-+        appliedPlaybackSpeed.set(PLAYBACK_SPEED_SCALE);
-+        audioRouteBaselineLeadNs.set(-1);
-+        audioRouteBaselineSamples.set(0);
-+        audioRouteAdjustmentNs.set(0);
-+        sinkLeadNs.set(0);
-+        audioQueueLeadNs.set(0);
-+    }
-+
-+    public static void updateVideoPresentation(long sourceTimestampNs,
-+                                               long presentationTargetNs,
-+                                               long updateTimeNs) {
-+        if (sourceTimestampNs <= 0 || presentationTargetNs <= sourceTimestampNs) {
-+            return;
-+        }
-+
-+        long measuredHoldbackNs = VIDEO_INPUT_LEAD_NS +
-+                presentationTargetNs - sourceTimestampNs;
-+        if (measuredHoldbackNs < MINIMUM_VIDEO_HOLDBACK_NS ||
-+                measuredHoldbackNs > MAXIMUM_VIDEO_HOLDBACK_NS) {
-+            return;
-+        }
-+
-+        long previousUpdatedAtNs = videoUpdatedAtNs.get();
-+        long previousHoldbackNs = videoHoldbackNs.get();
-+        long differenceNs = measuredHoldbackNs - previousHoldbackNs;
-+        long baselineSamples = videoBaselineSamples.get();
-+        long filteredHoldbackNs;
-+        long baselineHoldbackNs = videoBaselineHoldbackNs.get();
-+        if (previousUpdatedAtNs == 0 ||
-+                updateTimeNs - previousUpdatedAtNs > VIDEO_CLOCK_STALE_NS) {
-+            filteredHoldbackNs = measuredHoldbackNs;
-+            baselineHoldbackNs = measuredHoldbackNs;
-+            baselineSamples = 1;
-+        }
-+        else if (Math.abs(differenceNs) >= VIDEO_REBASE_THRESHOLD_NS) {
-+            filteredHoldbackNs = measuredHoldbackNs;
-+            baselineHoldbackNs = baselineSamples < VIDEO_BASELINE_SAMPLES ?
-+                    measuredHoldbackNs :
-+                    measuredHoldbackNs + baselineHoldbackNs - previousHoldbackNs;
-+        }
-+        else {
-+            filteredHoldbackNs = previousHoldbackNs + (differenceNs >> VIDEO_FILTER_SHIFT);
-+            if (baselineSamples < VIDEO_BASELINE_SAMPLES) {
-+                baselineHoldbackNs = filteredHoldbackNs;
-+                baselineSamples++;
-+            }
-+        }
-+
-+        videoHoldbackNs.set(filteredHoldbackNs);
-+        videoBaselineHoldbackNs.set(baselineHoldbackNs);
-+        videoBaselineSamples.set(baselineSamples);
-+        videoUpdatedAtNs.set(updateTimeNs);
-+    }
-+
-+    public static void reportAudioWriterWake(long releaseDeadlineNs, long wokeAtNs) {
-+        long latenessNs = Math.max(0, wokeAtNs - releaseDeadlineNs);
-+        latenessNs = Math.min(latenessNs, MAXIMUM_SCHEDULER_COMPENSATION_NS);
-+        smoothAtomic(schedulerCompensationNs, latenessNs, SCHEDULER_FILTER_SHIFT);
-+    }
-+
-+    public static void updateAudioRouteLead(long measuredSinkLeadNs,
-+                                            long measuredQueueLeadNs) {
-+        if (measuredSinkLeadNs < 0 || measuredSinkLeadNs > MAXIMUM_SINK_LEAD_NS ||
-+                measuredQueueLeadNs < 0 ||
-+                measuredQueueLeadNs > MAXIMUM_AUDIO_QUEUE_LEAD_NS) {
-+            return;
-+        }
-+
-+        long measuredRouteLeadNs = measuredSinkLeadNs + measuredQueueLeadNs;
-+        long baselineLeadNs = audioRouteBaselineLeadNs.get();
-+        long baselineSamples = audioRouteBaselineSamples.get();
-+        if (baselineLeadNs < 0) {
-+            audioRouteBaselineLeadNs.set(measuredRouteLeadNs);
-+            audioRouteBaselineSamples.set(1);
-+            audioRouteAdjustmentNs.set(0);
-+            sinkLeadNs.set(measuredSinkLeadNs);
-+            audioQueueLeadNs.set(measuredQueueLeadNs);
-+            return;
-+        }
-+        if (baselineSamples < AUDIO_ROUTE_BASELINE_SAMPLES) {
-+            baselineLeadNs +=
-+                    (measuredRouteLeadNs - baselineLeadNs) >> SINK_FILTER_SHIFT;
-+            audioRouteBaselineLeadNs.set(baselineLeadNs);
-+            audioRouteBaselineSamples.set(baselineSamples + 1);
-+            audioRouteAdjustmentNs.set(0);
-+            sinkLeadNs.set(measuredSinkLeadNs);
-+            audioQueueLeadNs.set(measuredQueueLeadNs);
-+            return;
-+        }
-+
-+        sinkLeadNs.set(measuredSinkLeadNs);
-+        audioQueueLeadNs.set(measuredQueueLeadNs);
-+        long adjustmentNs = measuredRouteLeadNs - baselineLeadNs;
-+        adjustmentNs = Math.max(MINIMUM_AUDIO_ROUTE_ADJUSTMENT_NS,
-+                Math.min(adjustmentNs, MAXIMUM_AUDIO_ROUTE_ADJUSTMENT_NS));
-+        smoothAtomic(audioRouteAdjustmentNs, adjustmentNs, SINK_FILTER_SHIFT);
-+    }
-+
-+    public static long getAudioHoldbackNs() {
-+        long holdbackNs = BASELINE_HOLDBACK_NS - schedulerCompensationNs.get();
-+        return Math.max(MINIMUM_VIDEO_HOLDBACK_NS,
-+                Math.min(holdbackNs, MAXIMUM_VIDEO_HOLDBACK_NS));
-+    }
-+
-+    public static float getAudioPlaybackSpeed(long nowNs,
-+                                              boolean drainAudioQueue) {
-+        long phaseErrorNs =
-+                audioRouteBaselineSamples.get() >= AUDIO_ROUTE_BASELINE_SAMPLES ?
-+                        getVideoDepthChangeNs(nowNs) - audioRouteAdjustmentNs.get() : 0;
-+        long desiredSpeed = PLAYBACK_SPEED_SCALE -
-+                phaseErrorNs / PLAYBACK_SPEED_ERROR_DIVISOR;
-+        desiredSpeed = Math.max(MINIMUM_PLAYBACK_SPEED,
-+                Math.min(desiredSpeed, MAXIMUM_PLAYBACK_SPEED));
-+        if (drainAudioQueue) {
-+            desiredSpeed = MAXIMUM_PLAYBACK_SPEED;
-+        }
-+        long speed = slewAtomic(appliedPlaybackSpeed, desiredSpeed,
-+                MAXIMUM_PLAYBACK_SPEED_STEP);
-+        return (float) speed / PLAYBACK_SPEED_SCALE;
-+    }
-+
-+    public static float getCurrentAudioPlaybackSpeed() {
-+        return (float) appliedPlaybackSpeed.get() / PLAYBACK_SPEED_SCALE;
-+    }
-+
-+    public static long getVideoHoldbackNs(long nowNs) {
-+        long updatedAtNs = videoUpdatedAtNs.get();
-+        if (updatedAtNs == 0 || nowNs - updatedAtNs > VIDEO_CLOCK_STALE_NS) {
-+            return BASELINE_HOLDBACK_NS;
-+        }
-+        return videoHoldbackNs.get();
-+    }
-+
-+    public static long getSchedulerCompensationNs() {
-+        return schedulerCompensationNs.get();
-+    }
-+
-+    public static long getAudioSinkLeadNs() {
-+        return sinkLeadNs.get();
-+    }
-+
-+    public static long getAudioQueueLeadNs() {
-+        return audioQueueLeadNs.get();
-+    }
-+
-+    public static long getAudioRouteAdjustmentNs() {
-+        return audioRouteAdjustmentNs.get();
-+    }
-+
-+    public static long getVideoDepthChangeNs(long nowNs) {
-+        long updatedAtNs = videoUpdatedAtNs.get();
-+        long baselineHoldbackNs = videoBaselineHoldbackNs.get();
-+        if (baselineHoldbackNs < 0 ||
-+                videoBaselineSamples.get() < VIDEO_BASELINE_SAMPLES ||
-+                nowNs - updatedAtNs > VIDEO_CLOCK_STALE_NS) {
-+            return 0;
-+        }
-+        return videoHoldbackNs.get() - baselineHoldbackNs;
-+    }
-+
-+    public static long getBaselineHoldbackNs() {
-+        return BASELINE_HOLDBACK_NS;
-+    }
-+
-+    private static long slewAtomic(AtomicLong value, long target, long maximumStep) {
-+        long previous;
-+        long next;
-+        do {
-+            previous = value.get();
-+            long difference = target - previous;
-+            long step = Math.max(-maximumStep, Math.min(difference, maximumStep));
-+            next = previous + step;
-+        } while (!value.compareAndSet(previous, next));
-+        return next;
-+    }
-+
-+    private static void smoothAtomic(AtomicLong value, long sample, int filterShift) {
-+        long previous;
-+        long filtered;
-+        do {
-+            previous = value.get();
-+            filtered = previous + ((sample - previous) >> filterShift);
-+        } while (!value.compareAndSet(previous, filtered));
-+    }
-+}
 diff --git a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
-index 537b50f..667e194 100755
+index 537b50f5b64dfab8d8239e2fbc112d6e0ce70881..54e35189c3291cb1503a800f081517e78294d33d 100755
 --- a/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
 +++ b/app/src/main/java/com/limelight/binding/video/MediaCodecDecoderRenderer.java
-@@ -6,8 +6,12 @@ import java.nio.ByteOrder;
+@@ -6,8 +6,15 @@ import java.nio.ByteOrder;
  import java.util.ArrayList;
  import java.util.Arrays;
  import java.util.List;
++import java.util.NavigableMap;
 +import java.util.concurrent.LinkedBlockingDeque;
++import java.util.concurrent.ConcurrentSkipListMap;
  import java.util.concurrent.LinkedBlockingQueue;
 +import java.util.concurrent.TimeUnit;
 +import java.util.concurrent.atomic.AtomicBoolean;
  import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicLong;
 +import java.util.concurrent.locks.LockSupport;
  
  import org.jcodec.codecs.h264.H264Utils;
  import org.jcodec.codecs.h264.io.model.SeqParameterSet;
-@@ -15,6 +19,7 @@ import org.jcodec.codecs.h264.io.model.VUIParameters;
+@@ -15,6 +22,7 @@ import org.jcodec.codecs.h264.io.model.VUIParameters;
  
  import com.limelight.BuildConfig;
  import com.limelight.LimeLog;
@@ -731,18 +534,19 @@ index 537b50f..667e194 100755
  import com.limelight.R;
  import com.limelight.nvstream.av.video.VideoDecoderRenderer;
  import com.limelight.nvstream.jni.MoonBridge;
-@@ -25,6 +30,10 @@ import android.annotation.SuppressLint;
+@@ -25,6 +33,11 @@ import android.annotation.SuppressLint;
  import android.annotation.TargetApi;
  import android.app.Activity;
  import android.content.Context;
 +import android.graphics.ImageFormat;
++import android.graphics.Rect;
 +import android.media.Image;
 +import android.media.ImageReader;
 +import android.media.ImageWriter;
  import android.media.MediaCodec;
  import android.media.MediaCodecInfo;
  import android.media.MediaFormat;
-@@ -65,6 +74,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -65,6 +78,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      private Activity activity;
      private MediaCodec videoDecoder;
      private Thread rendererThread;
@@ -751,7 +555,7 @@ index 537b50f..667e194 100755
      private boolean needsSpsBitstreamFixup, isExynos4;
      private boolean adaptivePlayback, directSubmit, fusedIdrFrame;
      private boolean constrainedHighProfile;
-@@ -75,8 +86,30 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -75,8 +90,59 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      private boolean invertResolution;
      private int videoFormat;
      private Surface renderTarget;
@@ -759,18 +563,47 @@ index 537b50f..667e194 100755
 +    private ImageReader decodedImageReader;
 +    private ImageWriter decodedImageWriter;
 +    private HandlerThread decodedImageReaderThread;
-+    private final LinkedBlockingDeque<Image> decodedImageQueue = new LinkedBlockingDeque<>();
++    private final LinkedBlockingDeque<JmgoDecodedImage> decodedImageQueue =
++            new LinkedBlockingDeque<>();
++    private final NavigableMap<Long, JmgoSubmittedFrame> submittedVideoMediaTimes =
++            new ConcurrentSkipListMap<>();
 +    private final LinkedBlockingQueue<JmgoPreparedImage> preparedImageQueue =
 +            new LinkedBlockingQueue<>(5);
 +    private long lastDecodedImageTimestampNs;
 +
++    private static final class JmgoSubmittedFrame {
++        final long mediaPresentationTimeMs;
++        final boolean hostDuplicate;
++
++        JmgoSubmittedFrame(long mediaPresentationTimeMs, boolean hostDuplicate) {
++            this.mediaPresentationTimeMs = mediaPresentationTimeMs;
++            this.hostDuplicate = hostDuplicate;
++        }
++    }
++
++    private static final class JmgoDecodedImage {
++        final Image image;
++        final long mediaPresentationTimeMs;
++        final boolean hostDuplicate;
++
++        JmgoDecodedImage(Image image, long mediaPresentationTimeMs,
++                         boolean hostDuplicate) {
++            this.image = image;
++            this.mediaPresentationTimeMs = mediaPresentationTimeMs;
++            this.hostDuplicate = hostDuplicate;
++        }
++    }
++
 +    private static final class JmgoPreparedImage {
 +        final Image image;
 +        final long sourceTimestampNs;
++        final long mediaPresentationTimeMs;
 +
-+        JmgoPreparedImage(Image image, long sourceTimestampNs) {
++        JmgoPreparedImage(Image image, long sourceTimestampNs,
++                          long mediaPresentationTimeMs) {
 +            this.image = image;
 +            this.sourceTimestampNs = sourceTimestampNs;
++            this.mediaPresentationTimeMs = mediaPresentationTimeMs;
 +        }
 +    }
 +    private static final int DECODED_IMAGE_READER_CAPACITY = 17;
@@ -782,11 +615,13 @@ index 537b50f..667e194 100755
      private boolean reportedCrash;
      private int consecutiveCrashCount;
      private String glRenderer;
-@@ -126,6 +159,30 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -126,6 +192,52 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      private long lastNetDataNum;
      private LinkedBlockingQueue<Integer> outputBufferQueue = new LinkedBlockingQueue<>();
      private static final int OUTPUT_BUFFER_QUEUE_LIMIT = 2;
 +    private static final int DECODED_IMAGE_START_THRESHOLD = 10;
++    private static final int DECODED_IMAGE_START_RETAINED = 5;
++    private static final int DECODED_IMAGE_LATENCY_TARGET = 5;
 +    private static final int PREPARED_IMAGE_QUEUE_LIMIT = 5;
 +    private static final long PRESENTATION_HANDOFF_LEAD_NS = 15_000_000L;
 +    private static final long PRESENTATION_MINIMUM_MARGIN_NS = 5_000_000L;
@@ -795,6 +630,10 @@ index 537b50f..667e194 100755
 +    private static final long VIDEO_STARVATION_CODEC_RECOVERY_NS = 1_000_000_000L;
 +    private static final long VIDEO_STARVATION_RECONNECT_NS = 3_000_000_000L;
 +    private static final long VIDEO_STAGE_FRESH_NS = 500_000_000L;
++    private static final long LATENCY_TELEMETRY_INTERVAL_NS = 5_000_000_000L;
++    private static final int FRAME_MARKER_SYNC = 0xA5;
++    private static final int FRAME_MARKER_SYNC_BITS = 8;
++    private static final int FRAME_MARKER_VALUE_BITS = 16;
 +    private volatile boolean outputPacingStarted;
 +    private volatile long lastDisplayVsyncNs;
 +    private volatile long lastDecodeUnitNs;
@@ -810,10 +649,26 @@ index 537b50f..667e194 100755
 +    private boolean starvationReconnectRequested;
 +    private volatile long testDropDecodedImagesUntilNs;
 +    private volatile long testDropDecodeUnitsUntilNs;
++    private final AtomicInteger minimumDecodedQueueDepth =
++            new AtomicInteger(Integer.MAX_VALUE);
++    private final AtomicInteger maximumDecodedQueueDepth = new AtomicInteger();
++    private final AtomicInteger minimumPreparedQueueDepth =
++            new AtomicInteger(Integer.MAX_VALUE);
++    private final AtomicInteger maximumPreparedQueueDepth = new AtomicInteger();
++    private final AtomicLong maximumImagePreparationNs = new AtomicLong();
++    private final AtomicLong maximumImageWriterQueueNs = new AtomicLong();
++    private final AtomicLong minimumHandoffMarginNs =
++            new AtomicLong(Long.MAX_VALUE);
++    private final AtomicLong markerUniqueFrames = new AtomicLong();
++    private final AtomicLong markerRepeatedFrames = new AtomicLong();
++    private final AtomicLong markerSkippedFrames = new AtomicLong();
++    private final AtomicLong syntheticDuplicatesCoalesced = new AtomicLong();
++    private int lastDecodedFrameMarker = -1;
++    private long lastLatencyTelemetryNs;
      private long lastRenderedFrameTimeNanos;
      private HandlerThread choreographerHandlerThread;
      private Handler choreographerHandler;
-@@ -303,7 +360,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -303,7 +415,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      }
  
      public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
@@ -823,7 +678,7 @@ index 537b50f..667e194 100755
                                       boolean meteredData, boolean requestedHdr, boolean invertResolution,
                                       String glRenderer, PerfOverlayListener perfListener) {
          //dumpDecoders();
-@@ -312,6 +370,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -312,6 +425,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          this.activity = activity;
          this.prefs = prefs;
          this.crashListener = crashListener;
@@ -831,7 +686,7 @@ index 537b50f..667e194 100755
          this.consecutiveCrashCount = consecutiveCrashCount;
          this.glRenderer = glRenderer;
          this.perfListener = perfListener;
-@@ -545,7 +604,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -545,7 +659,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
  
          LimeLog.info("Configuring with format: "+format);
  
@@ -841,7 +696,7 @@ index 537b50f..667e194 100755
  
          configuredFormat = format;
  
-@@ -571,6 +631,171 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -571,6 +686,330 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          }
      }
  
@@ -877,15 +732,22 @@ index 537b50f..667e194 100755
 +                            long minimumFrameSpacingNs = 500_000_000L / Math.max(1, refreshRate);
 +                            if ((timestampDeltaNs <= 0 || timestampDeltaNs < minimumFrameSpacingNs) &&
 +                                    decodedImageQueue.size() >= DECODED_IMAGE_QUEUE_LIMIT) {
-+                                Image superseded = decodedImageQueue.pollLast();
++                                JmgoDecodedImage superseded = decodedImageQueue.pollLast();
 +                                if (superseded != null) {
-+                                    superseded.close();
++                                    superseded.image.close();
 +                                    LimeLog.info("JMGO decoded supplemental image coalesced");
 +                                }
 +                            }
 +                        }
 +                        lastDecodedImageTimestampNs = imageTimestampNs;
-+                        if (decodedImageQueue.offer(image,
++                        JmgoSubmittedFrame submittedFrame =
++                                submittedVideoMediaTimes.remove(imageTimestampNs);
++                        submittedVideoMediaTimes.headMap(imageTimestampNs, false).clear();
++                        JmgoDecodedImage decodedImage = new JmgoDecodedImage(image,
++                                submittedFrame != null ?
++                                        submittedFrame.mediaPresentationTimeMs : -1,
++                                submittedFrame != null && submittedFrame.hostDuplicate);
++                        if (decodedImageQueue.offer(decodedImage,
 +                                DECODED_IMAGE_QUEUE_OFFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
 +                            image = null;
 +                            if (decodedImageQueue.size() >= DECODED_IMAGE_QUEUE_LIMIT) {
@@ -930,15 +792,17 @@ index 537b50f..667e194 100755
 +    }
 +
 +    private void clearDecodedImages() {
-+        Image image;
-+        while ((image = decodedImageQueue.poll()) != null) {
-+            image.close();
++        JmgoDecodedImage decodedImage;
++        while ((decodedImage = decodedImageQueue.poll()) != null) {
++            decodedImage.image.close();
 +        }
++        submittedVideoMediaTimes.clear();
 +        JmgoPreparedImage preparedImage;
 +        while ((preparedImage = preparedImageQueue.poll()) != null) {
 +            preparedImage.image.close();
 +        }
 +        lastDecodedImageTimestampNs = 0;
++        lastDecodedFrameMarker = -1;
 +        JmgoAvSyncClock.resetVideoClock();
 +    }
 +
@@ -965,19 +829,168 @@ index 537b50f..667e194 100755
 +        }
 +    }
 +
-+    private JmgoPreparedImage prepareDecodedImage(Image source) {
++    private int decodeJmgoFrameMarker(Image source) {
++        if (!BuildConfig.DEBUG) {
++            return -1;
++        }
++
++        Rect crop = source.getCropRect();
++        int markerCells = FRAME_MARKER_SYNC_BITS + FRAME_MARKER_VALUE_BITS;
++        if (crop.width() < markerCells * 4 || crop.height() < 80) {
++            return -1;
++        }
++
++        Image.Plane yPlane = source.getPlanes()[0];
++        ByteBuffer luma = yPlane.getBuffer();
++        int sampleY = crop.bottom - Math.max(2, crop.height() / 80);
++        int sync = 0;
++        int value = 0;
++        for (int cell = 0; cell < markerCells; cell++) {
++            int sampleX = crop.left +
++                    (int) (((long) (cell * 2 + 1) * crop.width()) /
++                            (markerCells * 2L));
++            int index = sampleY * yPlane.getRowStride() +
++                    sampleX * yPlane.getPixelStride();
++            if (index < 0 || index >= luma.limit()) {
++                return -1;
++            }
++            int bit = (luma.get(index) & 0xFF) >= 128 ? 1 : 0;
++            if (cell < FRAME_MARKER_SYNC_BITS) {
++                sync |= bit << cell;
++            }
++            else {
++                value |= bit << (cell - FRAME_MARKER_SYNC_BITS);
++            }
++        }
++        return sync == FRAME_MARKER_SYNC ? value : -1;
++    }
++
++    private void recordJmgoFrameMarker(int marker) {
++        if (marker < 0) {
++            return;
++        }
++        if (lastDecodedFrameMarker < 0) {
++            markerUniqueFrames.incrementAndGet();
++        }
++        else {
++            int delta = (marker - lastDecodedFrameMarker) & 0xFFFF;
++            if (delta == 0) {
++                markerRepeatedFrames.incrementAndGet();
++            }
++            else {
++                markerUniqueFrames.incrementAndGet();
++                if (delta > 1 && delta < 0x8000) {
++                    markerSkippedFrames.addAndGet(delta - 1L);
++                }
++            }
++        }
++        lastDecodedFrameMarker = marker;
++    }
++
++    private void recordJmgoQueueDepths() {
++        updateAtomicMinimum(minimumDecodedQueueDepth, decodedImageQueue.size());
++        updateAtomicMaximum(maximumDecodedQueueDepth, decodedImageQueue.size());
++        updateAtomicMinimum(minimumPreparedQueueDepth, preparedImageQueue.size());
++        updateAtomicMaximum(maximumPreparedQueueDepth, preparedImageQueue.size());
++    }
++
++    private void maybeLogJmgoLatencyTelemetry(long nowNs) {
++        if (lastLatencyTelemetryNs == 0) {
++            lastLatencyTelemetryNs = nowNs;
++            return;
++        }
++        if (nowNs - lastLatencyTelemetryNs < LATENCY_TELEMETRY_INTERVAL_NS) {
++            return;
++        }
++        lastLatencyTelemetryNs = nowNs;
++
++        int decodedMinimum = minimumDecodedQueueDepth.getAndSet(Integer.MAX_VALUE);
++        int decodedMaximum = maximumDecodedQueueDepth.getAndSet(0);
++        int preparedMinimum = minimumPreparedQueueDepth.getAndSet(Integer.MAX_VALUE);
++        int preparedMaximum = maximumPreparedQueueDepth.getAndSet(0);
++        long preparationMaximumNs = maximumImagePreparationNs.getAndSet(0);
++        long writerMaximumNs = maximumImageWriterQueueNs.getAndSet(0);
++        long handoffMinimumNs = minimumHandoffMarginNs.getAndSet(Long.MAX_VALUE);
++        long uniqueFrames = markerUniqueFrames.getAndSet(0);
++        long repeatedFrames = markerRepeatedFrames.getAndSet(0);
++        long skippedFrames = markerSkippedFrames.getAndSet(0);
++        long coalescedDuplicates = syntheticDuplicatesCoalesced.getAndSet(0);
++        if (decodedMinimum == Integer.MAX_VALUE ||
++                preparedMinimum == Integer.MAX_VALUE ||
++                handoffMinimumNs == Long.MAX_VALUE) {
++            return;
++        }
++
++        LimeLog.info("JMGO latency telemetry: video holdback=" +
++                (JmgoAvSyncClock.getVideoHoldbackNs(nowNs) / 1_000_000L) +
++                " ms, decoded=" + decodedMinimum + "-" + decodedMaximum +
++                ", prepared=" + preparedMinimum + "-" + preparedMaximum +
++                ", prepare max=" + (preparationMaximumNs / 1_000_000.0) +
++                " ms, writer max=" + (writerMaximumNs / 1_000_000.0) +
++                " ms, handoff margin min=" + (handoffMinimumNs / 1_000_000.0) +
++                " ms, marker unique=" + uniqueFrames +
++                ", repeated=" + repeatedFrames +
++                ", skipped=" + skippedFrames +
++                ", synthetic coalesced=" + coalescedDuplicates);
++    }
++
++    private static void updateAtomicMinimum(AtomicInteger value, int sample) {
++        int previous;
++        do {
++            previous = value.get();
++            if (sample >= previous) {
++                return;
++            }
++        } while (!value.compareAndSet(previous, sample));
++    }
++
++    private static void updateAtomicMaximum(AtomicInteger value, int sample) {
++        int previous;
++        do {
++            previous = value.get();
++            if (sample <= previous) {
++                return;
++            }
++        } while (!value.compareAndSet(previous, sample));
++    }
++
++    private static void updateAtomicMinimum(AtomicLong value, long sample) {
++        long previous;
++        do {
++            previous = value.get();
++            if (sample >= previous) {
++                return;
++            }
++        } while (!value.compareAndSet(previous, sample));
++    }
++
++    private static void updateAtomicMaximum(AtomicLong value, long sample) {
++        long previous;
++        do {
++            previous = value.get();
++            if (sample <= previous) {
++                return;
++            }
++        } while (!value.compareAndSet(previous, sample));
++    }
++
++    private JmgoPreparedImage prepareDecodedImage(JmgoDecodedImage decodedImage) {
++        Image source = decodedImage.image;
 +        Image writerImage = null;
 +        try {
 +            long sourceTimestampNs = source.getTimestamp();
++            recordJmgoFrameMarker(decodeJmgoFrameMarker(source));
 +            long prepareStartNs = System.nanoTime();
 +            writerImage = decodedImageWriter.dequeueInputImage();
 +            copyDecodedImage(source, writerImage);
 +            long prepareDurationNs = System.nanoTime() - prepareStartNs;
++            updateAtomicMaximum(maximumImagePreparationNs, prepareDurationNs);
 +            if (prepareDurationNs >= 30_000_000L) {
 +                LimeLog.warning("JMGO image writer slow: " +
 +                        (prepareDurationNs / 1_000_000L) + " ms");
 +            }
-+            return new JmgoPreparedImage(writerImage, sourceTimestampNs);
++            return new JmgoPreparedImage(writerImage, sourceTimestampNs,
++                    decodedImage.mediaPresentationTimeMs);
 +        }
 +        catch (RuntimeException e) {
 +            if (writerImage != null) {
@@ -997,6 +1010,7 @@ index 537b50f..667e194 100755
 +            decodedImageWriter.queueInputImage(preparedImage.image);
 +            activeWindowVideoStats.totalFramesRendered++;
 +            long queueDurationNs = System.nanoTime() - queueStartNs;
++            updateAtomicMaximum(maximumImageWriterQueueNs, queueDurationNs);
 +            if (queueDurationNs >= 12_000_000L) {
 +                LimeLog.warning("JMGO prepared image queue slow: " +
 +                        (queueDurationNs / 1_000_000L) + " ms");
@@ -1013,7 +1027,7 @@ index 537b50f..667e194 100755
      private boolean tryConfigureDecoder(MediaCodecInfo selectedDecoderInfo, MediaFormat format, boolean throwOnCodecError) {
          boolean configured = false;
          try {
-@@ -675,7 +900,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -675,7 +1114,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
  
              MediaFormat mediaFormat = createBaseMediaFormat(mimeType);
              // This will try low latency options until we find one that works (or we give up).
@@ -1023,7 +1037,7 @@ index 537b50f..667e194 100755
              //todo 色彩格式
  //            MediaCodecInfo.CodecCapabilities codecCapabilities = selectedDecoderInfo.getCapabilitiesForType(mimeType);
  //            int[] colorFormats=codecCapabilities.colorFormats;
-@@ -718,6 +944,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -718,6 +1158,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          this.videoFormat = format;
          this.refreshRate = redrawRate;
  
@@ -1037,7 +1051,7 @@ index 537b50f..667e194 100755
          return initializeDecoder(false);
      }
  
-@@ -745,6 +978,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -745,6 +1192,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                  nextInputBuffer = null;
                  nextInputBufferIndex = -1;
                  outputBufferQueue.clear();
@@ -1046,7 +1060,7 @@ index 537b50f..667e194 100755
  
                  // If we just need a flush, do so now with all threads quiesced.
                  if (codecRecoveryType.get() == CR_RECOVERY_TYPE_FLUSH) {
-@@ -988,6 +1223,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -988,6 +1437,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
              return;
          }
  
@@ -1059,7 +1073,7 @@ index 537b50f..667e194 100755
          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
              frameTimeNanos -= activity.getWindowManager().getDefaultDisplay().getAppVsyncOffsetNanos();
          }
-@@ -1035,6 +1276,272 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1035,6 +1490,301 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          Choreographer.getInstance().postFrameCallback(this);
      }
  
@@ -1180,18 +1194,36 @@ index 537b50f..667e194 100755
 +                ", duration=" + boundedDurationMs + " ms");
 +    }
 +
++    private int trimDecodedImagesForStartup() {
++        int trimmed = 0;
++        JmgoDecodedImage decodedImage;
++        while (decodedImageQueue.size() > DECODED_IMAGE_START_RETAINED &&
++                (decodedImage = decodedImageQueue.poll()) != null) {
++            decodedImage.image.close();
++            trimmed++;
++        }
++        return trimmed;
++    }
++
 +    private void startImagePreparationThread() {
 +        imagePreparationThread = new Thread(() -> {
 +            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 +            JmgoPreparedImage preparedImage = null;
 +            try {
 +                while (!stopping) {
-+                    Image sourceImage = decodedImageQueue.poll();
++                    JmgoDecodedImage sourceImage = decodedImageQueue.poll();
 +                    if (sourceImage == null) {
 +                        LockSupport.parkNanos(1_000_000L);
 +                        if (Thread.interrupted()) {
 +                            return;
 +                        }
++                        continue;
++                    }
++
++                    if (sourceImage.hostDuplicate &&
++                            decodedImageQueue.size() >= DECODED_IMAGE_LATENCY_TARGET) {
++                        sourceImage.image.close();
++                        syntheticDuplicatesCoalesced.incrementAndGet();
 +                        continue;
 +                    }
 +
@@ -1242,6 +1274,11 @@ index 537b50f..667e194 100755
 +                            }
 +                            continue;
 +                        }
++                        int startupTrimmedFrames = trimDecodedImagesForStartup();
++                        if (startupTrimmedFrames > 0) {
++                            LimeLog.info("JMGO startup latency trimmed " +
++                                    startupTrimmedFrames + " stale decoded frames");
++                        }
 +                        if (preparationThread != null) {
 +                            LimeLog.warning("JMGO image preparation thread restarted");
 +                            imagePreparationThread = null;
@@ -1288,6 +1325,7 @@ index 537b50f..667e194 100755
 +                            (schedulerDelayNs / 1_000_000L) + " ms");
 +                }
 +
++                recordJmgoQueueDepths();
 +                JmgoPreparedImage preparedImage = preparedImageQueue.poll();
 +                if (preparedImage != null) {
 +                    boolean queued = queuePreparedImage(preparedImage);
@@ -1296,11 +1334,16 @@ index 537b50f..667e194 100755
 +                        lastPresentedImageNs = handoffCompletedNs;
 +                        JmgoAvSyncClock.updateVideoPresentation(
 +                                preparedImage.sourceTimestampNs,
++                                preparedImage.mediaPresentationTimeMs,
 +                                nextReleaseNs + PRESENTATION_HANDOFF_LEAD_NS,
 +                                handoffCompletedNs);
 +                        finishJmgoVideoStarvation(handoffCompletedNs);
 +                    }
 +                    long handoffOffsetNs = handoffCompletedNs - nextReleaseNs;
++                    long handoffMarginNs = nextReleaseNs +
++                            PRESENTATION_HANDOFF_LEAD_NS - handoffCompletedNs;
++                    updateAtomicMinimum(minimumHandoffMarginNs, handoffMarginNs);
++                    maybeLogJmgoLatencyTelemetry(handoffCompletedNs);
 +                    if (handoffOffsetNs >=
 +                            PRESENTATION_HANDOFF_LEAD_NS - PRESENTATION_MINIMUM_MARGIN_NS) {
 +                        LimeLog.warning("JMGO prepared image handoff late: " +
@@ -1332,7 +1375,7 @@ index 537b50f..667e194 100755
      private void startChoreographerThread() {
          if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED) {
              // Not using Choreographer in this pacing mode
-@@ -1060,6 +1567,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1060,6 +1810,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          rendererThread = new Thread() {
              @Override
              public void run() {
@@ -1340,7 +1383,7 @@ index 537b50f..667e194 100755
                  BufferInfo info = new BufferInfo();
                  while (!stopping) {
                      try {
-@@ -1070,6 +1578,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1070,6 +1821,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                              int lastIndex = outIndex;
  
                              numFramesOut++;
@@ -1348,7 +1391,7 @@ index 537b50f..667e194 100755
  
                              // Render the latest frame now if frame pacing isn't in balanced mode
                              if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED) {
-@@ -1108,26 +1617,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1108,26 +1860,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                  activeWindowVideoStats.totalFramesRendered++;
                              }
                              else {
@@ -1390,7 +1433,7 @@ index 537b50f..667e194 100755
                              }
  
                              // Add delta time to the totals (excluding probable outliers)
-@@ -1241,7 +1747,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1241,7 +1990,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      @Override
      public void start() {
          startRendererThread();
@@ -1406,7 +1449,7 @@ index 537b50f..667e194 100755
      }
  
      // !!! May be called even if setup()/start() fails !!!
-@@ -1253,6 +1766,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1253,6 +2009,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
          if (rendererThread != null) {
              rendererThread.interrupt();
          }
@@ -1419,7 +1462,7 @@ index 537b50f..667e194 100755
  
          // Stop any active codec recovery operations
          synchronized (codecRecoveryMonitor) {
-@@ -1294,6 +1813,24 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1294,6 +2056,24 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
              }
          }
  
@@ -1444,7 +1487,7 @@ index 537b50f..667e194 100755
          // Wait for the renderer thread to shut down
          try {
              rendererThread.join();
-@@ -1310,6 +1847,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1310,6 +2090,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      @Override
      public void cleanup() {
          videoDecoder.release();
@@ -1465,7 +1508,15 @@ index 537b50f..667e194 100755
      }
  
      @Override
-@@ -1413,6 +1964,26 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+@@ -1407,12 +2201,33 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+     @Override
+     public int submitDecodeUnit(byte[] decodeUnitData, int decodeUnitLength, int decodeUnitType,
+                                 int frameNumber, int frameType, char frameHostProcessingLatency,
+-                                long receiveTimeMs, long enqueueTimeMs) {
++                                long receiveTimeMs, long enqueueTimeMs,
++                                long presentationTimeMs) {
+         if (stopping) {
+             // Don't bother if we're stopping
              return MoonBridge.DR_OK;
          }
  
@@ -1492,19 +1543,54 @@ index 537b50f..667e194 100755
          if (lastFrameNumber == 0) {
              activeWindowVideoStats.measurementStartTimestamp = SystemClock.uptimeMillis();
          } else if (frameNumber != lastFrameNumber && frameNumber != lastFrameNumber + 1) {
-diff --git a/app/src/main/java/com/limelight/binding/video/VideoStallListener.java b/app/src/main/java/com/limelight/binding/video/VideoStallListener.java
-new file mode 100644
-index 0000000..b49194f
---- /dev/null
-+++ b/app/src/main/java/com/limelight/binding/video/VideoStallListener.java
-@@ -0,0 +1,5 @@
-+package com.limelight.binding.video;
+@@ -1792,6 +2607,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+ 
+         numFramesIn++;
+ 
++        submittedVideoMediaTimes.put(timestampUs * 1000,
++                new JmgoSubmittedFrame(presentationTimeMs,
++                        frameHostProcessingLatency == 0));
 +
-+public interface VideoStallListener {
-+    void requestStreamRestart(String stalledStage, long stalledDurationMs);
-+}
+         if (decodeUnitLength > nextInputBuffer.limit() - nextInputBuffer.position()) {
+             IllegalArgumentException exception = new IllegalArgumentException(
+                     "Decode unit length "+decodeUnitLength+" too large for input buffer "+nextInputBuffer.limit());
+@@ -1806,6 +2625,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
+         nextInputBuffer.put(decodeUnitData, 0, decodeUnitLength);
+ 
+         if (!queueNextInputBuffer(timestampUs, codecFlags)) {
++            submittedVideoMediaTimes.remove(timestampUs * 1000);
+             return MoonBridge.DR_NEED_IDR;
+         }
+ 
+diff --git a/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java b/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
+index 49674bfe5969863e7a1ed71bf978fdd6ea8750e3..eeec578432d6c6c666ae26235c1ac4873c6a7d0e 100755
+--- a/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
++++ b/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
+@@ -9,7 +9,7 @@ public interface AudioRenderer {
+ 
+     void stop();
+     
+-    void playDecodedAudio(short[] audioData);
++    void playDecodedAudio(short[] audioData, long presentationTimeMs);
+     
+     void cleanup();
+ }
+diff --git a/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java b/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java
+index 673a90aeebf52e74c2b01851ee934b675a443e57..d40e39c1fda4da4e8018f292acba8ed9dc4867b3 100755
+--- a/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java
++++ b/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java
+@@ -11,7 +11,8 @@ public abstract class VideoDecoderRenderer {
+     // for an IDR frame which contains several parameter sets and the I-frame data.
+     public abstract int submitDecodeUnit(byte[] decodeUnitData, int decodeUnitLength, int decodeUnitType,
+                                          int frameNumber, int frameType, char frameHostProcessingLatency,
+-                                         long receiveTimeMs, long enqueueTimeMs);
++                                         long receiveTimeMs, long enqueueTimeMs,
++                                         long presentationTimeMs);
+     
+     public abstract void cleanup();
+ 
 diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
-index de2f617..3074d6e 100755
+index de2f617bdf2af88d3dc9edce2203dc3f6b875a34..ffddfea1d1cd402fc95b7c2eb334700297a94006 100755
 --- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
 +++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
 @@ -1,5 +1,7 @@
@@ -1515,7 +1601,34 @@ index de2f617..3074d6e 100755
  import com.limelight.nvstream.NvConnectionListener;
  import com.limelight.nvstream.av.audio.AudioRenderer;
  import com.limelight.nvstream.av.video.VideoDecoderRenderer;
-@@ -340,6 +342,12 @@ public class MoonBridge {
+@@ -218,10 +220,12 @@ public class MoonBridge {
+     //todo 不显示画面
+     public static int bridgeDrSubmitDecodeUnit(byte[] decodeUnitData, int decodeUnitLength, int decodeUnitType,
+                                                int frameNumber, int frameType, char frameHostProcessingLatency,
+-                                               long receiveTimeMs, long enqueueTimeMs) {
++                                               long receiveTimeMs, long enqueueTimeMs,
++                                               long presentationTimeMs) {
+         if (videoRenderer != null) {
+             return videoRenderer.submitDecodeUnit(decodeUnitData, decodeUnitLength,
+-                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeMs, enqueueTimeMs);
++                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency,
++                    receiveTimeMs, enqueueTimeMs, presentationTimeMs);
+         }
+         else {
+             return DR_OK;
+@@ -256,9 +260,9 @@ public class MoonBridge {
+     }
+ 
+     //静音 todo
+-    public static void bridgeArPlaySample(short[] pcmData) {
++    public static void bridgeArPlaySample(short[] pcmData, long presentationTimeMs) {
+         if (audioRenderer != null) {
+-            audioRenderer.playDecodedAudio(pcmData);
++            audioRenderer.playDecodedAudio(pcmData, presentationTimeMs);
+         }
+     }
+ 
+@@ -340,6 +344,12 @@ public class MoonBridge {
          MoonBridge.connectionListener = null;
      }
  
@@ -1528,7 +1641,7 @@ index de2f617..3074d6e 100755
      public static native int startConnection(String address, String appVersion, String gfeVersion,
                                                String rtspSessionUrl, int serverCodecModeSupport,
                                                int width, int height, int fps,
-@@ -354,6 +362,8 @@ public class MoonBridge {
+@@ -354,6 +364,8 @@ public class MoonBridge {
  
      public static native void interruptConnection();
  
@@ -1538,7 +1651,7 @@ index de2f617..3074d6e 100755
  
      public static native void sendMouseMove(short deltaX, short deltaY);
 diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
-index 6b6e13a..2a8ddd6 100644
+index 6b6e13ac5aa4033089270e6d7a6cfb792437beda..2b1f5f4ddcd3ae130d06aaa5c7c6ebba42b59a23 100644
 --- a/app/src/main/jni/moonlight-core/callbacks.c
 +++ b/app/src/main/jni/moonlight-core/callbacks.c
 @@ -41,6 +41,43 @@ static jmethodID BridgeClSetControllerLEDMethod;
@@ -1585,8 +1698,60 @@ index 6b6e13a..2a8ddd6 100644
  void DetachThread(void* context) {
      (*JVM)->DetachCurrentThread(JVM);
  }
+@@ -85,12 +122,12 @@ Java_com_limelight_nvstream_jni_MoonBridge_init(JNIEnv *env, jclass clazz) {
+     BridgeDrStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrStart", "()V");
+     BridgeDrStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrStop", "()V");
+     BridgeDrCleanupMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrCleanup", "()V");
+-    BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJ)I");
++    BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJJ)I");
+     BridgeArInitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArInit", "(III)I");
+     BridgeArStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStart", "()V");
+     BridgeArStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStop", "()V");
+     BridgeArCleanupMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArCleanup", "()V");
+-    BridgeArPlaySampleMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArPlaySample", "([S)V");
++    BridgeArPlaySampleMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArPlaySample", "([SJ)V");
+     BridgeClStageStartingMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClStageStarting", "(I)V");
+     BridgeClStageCompleteMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClStageComplete", "(I)V");
+     BridgeClStageFailedMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClStageFailed", "(II)V");
+@@ -168,7 +205,8 @@ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
+             ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+                                               DecodedFrameBuffer, currentEntry->length, currentEntry->bufferType,
+                                               decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+-                                              (jlong)decodeUnit->receiveTimeMs, (jlong)decodeUnit->enqueueTimeMs);
++                                              (jlong)decodeUnit->receiveTimeMs, (jlong)decodeUnit->enqueueTimeMs,
++                                              (jlong)decodeUnit->presentationTimeMs);
+             if ((*env)->ExceptionCheck(env)) {
+                 // We will crash here
+                 (*JVM)->DetachCurrentThread(JVM);
+@@ -189,7 +227,8 @@ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
+     ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+                                        DecodedFrameBuffer, offset, BUFFER_TYPE_PICDATA,
+                                        decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+-                                       (jlong)decodeUnit->receiveTimeMs, (jlong)decodeUnit->enqueueTimeMs);
++                                       (jlong)decodeUnit->receiveTimeMs, (jlong)decodeUnit->enqueueTimeMs,
++                                       (jlong)decodeUnit->presentationTimeMs);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+         (*JVM)->DetachCurrentThread(JVM);
+@@ -266,7 +305,9 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
+         // We must release the array elements before making further JNI calls
+         (*env)->ReleasePrimitiveArrayCritical(env, DecodedAudioBuffer, decodedData, 0);
+ 
+-        (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
++        (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod,
++                                     DecodedAudioBuffer,
++                                     (jlong)LiGetCurrentAudioPresentationTime());
+         if ((*env)->ExceptionCheck(env)) {
+             // We will crash here
+             (*JVM)->DetachCurrentThread(JVM);
+diff --git a/app/src/main/jni/moonlight-core/moonlight-common-c b/app/src/main/jni/moonlight-core/moonlight-common-c
+--- a/app/src/main/jni/moonlight-core/moonlight-common-c
++++ b/app/src/main/jni/moonlight-core/moonlight-common-c
+@@ -1 +1 @@
+-Subproject commit ad329b240f18826f320ce6a99226b36354b86b59
++Subproject commit ad329b240f18826f320ce6a99226b36354b86b59-dirty
 diff --git a/app/src/main/jni/moonlight-core/simplejni.c b/app/src/main/jni/moonlight-core/simplejni.c
-index 66ee8bd..f07c17b 100644
+index 66ee8bd4ecf60043270baeb66dec976ffbecdf14..f07c17babbd1166715532530a2bec3d8efbff458 100644
 --- a/app/src/main/jni/moonlight-core/simplejni.c
 +++ b/app/src/main/jni/moonlight-core/simplejni.c
 @@ -135,6 +135,11 @@ Java_com_limelight_nvstream_jni_MoonBridge_interruptConnection(JNIEnv *env, jcla
@@ -1601,3 +1766,363 @@ index 66ee8bd..f07c17b 100644
  JNIEXPORT jstring JNICALL
  Java_com_limelight_nvstream_jni_MoonBridge_getStageName(JNIEnv *env, jclass clazz, jint stage) {
      return (*env)->NewStringUTF(env, LiGetStageName(stage));
+diff --git a/app/src/main/java/com/limelight/binding/av/JmgoAvSyncClock.java b/app/src/main/java/com/limelight/binding/av/JmgoAvSyncClock.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..79df1aba1de0401a4e3ca9175e0de68b1116bdea
+--- /dev/null
++++ b/app/src/main/java/com/limelight/binding/av/JmgoAvSyncClock.java
+@@ -0,0 +1,343 @@
++package com.limelight.binding.av;
++
++import java.util.concurrent.atomic.AtomicLong;
++
++public final class JmgoAvSyncClock {
++    private static final long NANOS_PER_MILLISECOND = 1_000_000L;
++    private static final long NANOS_PER_SECOND = 1_000_000_000L;
++    private static final long VIDEO_INPUT_LEAD_NS = 125 * NANOS_PER_MILLISECOND;
++    private static final int FALLBACK_DECODED_IMAGES = 10;
++    private static final int FALLBACK_PREPARED_IMAGES = 5;
++    private static final int STREAM_FRAMES_PER_SECOND = 60;
++    private static final long PRESENTATION_HANDOFF_LEAD_NS = 15 * NANOS_PER_MILLISECOND;
++    private static final long NOMINAL_VIDEO_HOLDBACK_NS =
++            VIDEO_INPUT_LEAD_NS +
++            (FALLBACK_DECODED_IMAGES + FALLBACK_PREPARED_IMAGES) *
++                    NANOS_PER_SECOND / STREAM_FRAMES_PER_SECOND +
++            PRESENTATION_HANDOFF_LEAD_NS;
++    private static final long MINIMUM_VIDEO_HOLDBACK_NS =
++            VIDEO_INPUT_LEAD_NS +
++            5 * NANOS_PER_SECOND / STREAM_FRAMES_PER_SECOND +
++            PRESENTATION_HANDOFF_LEAD_NS;
++    private static final long MAXIMUM_VIDEO_HOLDBACK_NS =
++            VIDEO_INPUT_LEAD_NS +
++            30 * NANOS_PER_SECOND / STREAM_FRAMES_PER_SECOND +
++            PRESENTATION_HANDOFF_LEAD_NS;
++    private static final long FALLBACK_AUDIO_SINK_LEAD_NS = 300 * NANOS_PER_MILLISECOND;
++    private static final long MAXIMUM_AUDIO_SINK_LEAD_NS = 500 * NANOS_PER_MILLISECOND;
++    private static final long MAXIMUM_AUDIO_QUEUE_LEAD_NS = 2 * NANOS_PER_SECOND;
++    private static final long MAXIMUM_AUDIO_WRITE_HOLDBACK_NS = 650 * NANOS_PER_MILLISECOND;
++    private static final long MAXIMUM_AUDIO_DEADLINE_CORRECTION_NS =
++            250 * NANOS_PER_MILLISECOND;
++    private static final long MAXIMUM_AUDIO_PHASE_ERROR_NS = NANOS_PER_SECOND;
++    private static final long MAXIMUM_SCHEDULER_COMPENSATION_NS =
++            20 * NANOS_PER_MILLISECOND;
++    private static final long PLAYBACK_SPEED_SCALE = 1_000_000L;
++    private static final long MINIMUM_PLAYBACK_SPEED = 980_000L;
++    private static final long MAXIMUM_PLAYBACK_SPEED = 1_020_000L;
++    private static final long MAXIMUM_PLAYBACK_SPEED_STEP = 500L;
++    private static final long PLAYBACK_SPEED_ERROR_DIVISOR = 5_000L;
++    private static final long MEDIA_CLOCK_STALE_NS = NANOS_PER_SECOND;
++    private static final long MEDIA_TIMELINE_COMPATIBILITY_MS = 5_000;
++    private static final long VIDEO_REBASE_THRESHOLD_NS = 100 * NANOS_PER_MILLISECOND;
++    private static final long VIDEO_BASELINE_SAMPLES = 60;
++    private static final long AUDIO_PHASE_WARMUP_SAMPLES = 8;
++    private static final int VIDEO_FILTER_SHIFT = 3;
++    private static final int MEDIA_OFFSET_FILTER_SHIFT = 3;
++    private static final int AUDIO_PHASE_FILTER_SHIFT = 3;
++    private static final int AUDIO_CORRECTION_SHIFT = 4;
++    private static final int SCHEDULER_FILTER_SHIFT = 4;
++    private static final int SINK_FILTER_SHIFT = 4;
++
++    private static final AtomicLong videoHoldbackNs =
++            new AtomicLong(NOMINAL_VIDEO_HOLDBACK_NS);
++    private static final AtomicLong videoBaselineHoldbackNs = new AtomicLong(-1);
++    private static final AtomicLong videoBaselineSamples = new AtomicLong();
++    private static final AtomicLong videoUpdatedAtNs = new AtomicLong();
++    private static final AtomicLong videoMediaOffsetNs = new AtomicLong(Long.MIN_VALUE);
++    private static final AtomicLong videoMediaTimeMs = new AtomicLong(-1);
++    private static final AtomicLong videoMediaUpdatedAtNs = new AtomicLong();
++    private static final AtomicLong schedulerCompensationNs = new AtomicLong();
++    private static final AtomicLong appliedPlaybackSpeed =
++            new AtomicLong(PLAYBACK_SPEED_SCALE);
++    private static final AtomicLong audioSinkLeadNs =
++            new AtomicLong(FALLBACK_AUDIO_SINK_LEAD_NS);
++    private static final AtomicLong audioQueueLeadNs = new AtomicLong();
++    private static final AtomicLong audioPhaseErrorNs = new AtomicLong();
++    private static final AtomicLong audioPhaseSamples = new AtomicLong();
++    private static final AtomicLong audioDeadlineCorrectionNs = new AtomicLong();
++
++    private JmgoAvSyncClock() {}
++
++    public static void resetVideoClock() {
++        videoHoldbackNs.set(NOMINAL_VIDEO_HOLDBACK_NS);
++        videoBaselineHoldbackNs.set(-1);
++        videoBaselineSamples.set(0);
++        videoUpdatedAtNs.set(0);
++        videoMediaOffsetNs.set(Long.MIN_VALUE);
++        videoMediaTimeMs.set(-1);
++        videoMediaUpdatedAtNs.set(0);
++    }
++
++    public static void resetAudioFeedback() {
++        schedulerCompensationNs.set(0);
++        appliedPlaybackSpeed.set(PLAYBACK_SPEED_SCALE);
++        audioSinkLeadNs.set(FALLBACK_AUDIO_SINK_LEAD_NS);
++        audioQueueLeadNs.set(0);
++        audioPhaseErrorNs.set(0);
++        audioPhaseSamples.set(0);
++    }
++
++    public static void updateVideoPresentation(long sourceTimestampNs,
++                                               long mediaPresentationTimeMs,
++                                               long presentationTargetNs,
++                                               long updateTimeNs) {
++        if (sourceTimestampNs <= 0 || presentationTargetNs <= sourceTimestampNs) {
++            return;
++        }
++
++        long measuredHoldbackNs = VIDEO_INPUT_LEAD_NS +
++                presentationTargetNs - sourceTimestampNs;
++        if (measuredHoldbackNs < MINIMUM_VIDEO_HOLDBACK_NS ||
++                measuredHoldbackNs > MAXIMUM_VIDEO_HOLDBACK_NS) {
++            return;
++        }
++
++        long previousUpdatedAtNs = videoUpdatedAtNs.get();
++        long previousHoldbackNs = videoHoldbackNs.get();
++        long differenceNs = measuredHoldbackNs - previousHoldbackNs;
++        long baselineSamples = videoBaselineSamples.get();
++        long filteredHoldbackNs;
++        long baselineHoldbackNs = videoBaselineHoldbackNs.get();
++        if (previousUpdatedAtNs == 0 ||
++                updateTimeNs - previousUpdatedAtNs > MEDIA_CLOCK_STALE_NS) {
++            filteredHoldbackNs = measuredHoldbackNs;
++            baselineHoldbackNs = measuredHoldbackNs;
++            baselineSamples = 1;
++        }
++        else if (Math.abs(differenceNs) >= VIDEO_REBASE_THRESHOLD_NS) {
++            filteredHoldbackNs = measuredHoldbackNs;
++            baselineHoldbackNs = baselineSamples < VIDEO_BASELINE_SAMPLES ?
++                    measuredHoldbackNs :
++                    measuredHoldbackNs + baselineHoldbackNs - previousHoldbackNs;
++        }
++        else {
++            filteredHoldbackNs = previousHoldbackNs +
++                    (differenceNs >> VIDEO_FILTER_SHIFT);
++            if (baselineSamples < VIDEO_BASELINE_SAMPLES) {
++                baselineHoldbackNs = filteredHoldbackNs;
++                baselineSamples++;
++            }
++        }
++
++        videoHoldbackNs.set(filteredHoldbackNs);
++        videoBaselineHoldbackNs.set(baselineHoldbackNs);
++        videoBaselineSamples.set(baselineSamples);
++        videoUpdatedAtNs.set(updateTimeNs);
++
++        if (mediaPresentationTimeMs < 0) {
++            return;
++        }
++        long measuredMediaOffsetNs = presentationTargetNs -
++                mediaPresentationTimeMs * NANOS_PER_MILLISECOND;
++        long previousMediaOffsetNs = videoMediaOffsetNs.get();
++        long previousMediaUpdateNs = videoMediaUpdatedAtNs.get();
++        long filteredMediaOffsetNs;
++        if (previousMediaOffsetNs == Long.MIN_VALUE ||
++                updateTimeNs - previousMediaUpdateNs > MEDIA_CLOCK_STALE_NS ||
++                Math.abs(measuredMediaOffsetNs - previousMediaOffsetNs) >=
++                        VIDEO_REBASE_THRESHOLD_NS) {
++            filteredMediaOffsetNs = measuredMediaOffsetNs;
++        }
++        else {
++            filteredMediaOffsetNs = previousMediaOffsetNs +
++                    ((measuredMediaOffsetNs - previousMediaOffsetNs) >>
++                            MEDIA_OFFSET_FILTER_SHIFT);
++        }
++        videoMediaOffsetNs.set(filteredMediaOffsetNs);
++        videoMediaTimeMs.set(mediaPresentationTimeMs);
++        videoMediaUpdatedAtNs.set(updateTimeNs);
++    }
++
++    public static long getAudioReleaseDeadlineNs(long mediaPresentationTimeMs,
++                                                 long receivedAtNs) {
++        long desiredPresentationNs = getDesiredAudioPresentationNs(
++                mediaPresentationTimeMs, receivedAtNs);
++        long releaseDeadlineNs = desiredPresentationNs - audioSinkLeadNs.get() +
++                audioDeadlineCorrectionNs.get() - schedulerCompensationNs.get();
++        return Math.max(receivedAtNs,
++                Math.min(releaseDeadlineNs,
++                        receivedAtNs + MAXIMUM_AUDIO_WRITE_HOLDBACK_NS));
++    }
++
++    public static long getDesiredAudioPresentationNs(long mediaPresentationTimeMs,
++                                                     long fallbackReceivedAtNs) {
++        long nowNs = System.nanoTime();
++        if (isMediaTimelineCompatible(mediaPresentationTimeMs, nowNs)) {
++            return videoMediaOffsetNs.get() +
++                    mediaPresentationTimeMs * NANOS_PER_MILLISECOND;
++        }
++        return fallbackReceivedAtNs + getVideoHoldbackNs(nowNs);
++    }
++
++    public static void updateAudioPresentation(long mediaPresentationTimeMs,
++                                               long receivedAtNs,
++                                               long predictedPresentationNs,
++                                               long measuredSinkLeadNs,
++                                               long measuredQueueLeadNs,
++                                               long updateTimeNs) {
++        if (predictedPresentationNs <= receivedAtNs ||
++                measuredSinkLeadNs < 0 ||
++                measuredSinkLeadNs > MAXIMUM_AUDIO_SINK_LEAD_NS ||
++                measuredQueueLeadNs < 0 ||
++                measuredQueueLeadNs > MAXIMUM_AUDIO_QUEUE_LEAD_NS) {
++            return;
++        }
++
++        smoothAtomic(audioSinkLeadNs, measuredSinkLeadNs, SINK_FILTER_SHIFT);
++        audioQueueLeadNs.set(measuredQueueLeadNs);
++
++        long desiredPresentationNs = getDesiredAudioPresentationNs(
++                mediaPresentationTimeMs, receivedAtNs);
++        long phaseErrorNs = desiredPresentationNs - predictedPresentationNs;
++        phaseErrorNs = Math.max(-MAXIMUM_AUDIO_PHASE_ERROR_NS,
++                Math.min(phaseErrorNs, MAXIMUM_AUDIO_PHASE_ERROR_NS));
++        smoothAtomic(audioPhaseErrorNs, phaseErrorNs, AUDIO_PHASE_FILTER_SHIFT);
++        long samples = audioPhaseSamples.incrementAndGet();
++        if (samples < AUDIO_PHASE_WARMUP_SAMPLES ||
++                !isMediaTimelineCompatible(mediaPresentationTimeMs, updateTimeNs)) {
++            return;
++        }
++
++        long correctionStepNs = audioPhaseErrorNs.get() >> AUDIO_CORRECTION_SHIFT;
++        correctionStepNs = Math.max(-NANOS_PER_MILLISECOND,
++                Math.min(correctionStepNs, NANOS_PER_MILLISECOND));
++        addClampedAtomic(audioDeadlineCorrectionNs, correctionStepNs,
++                -MAXIMUM_AUDIO_DEADLINE_CORRECTION_NS,
++                MAXIMUM_AUDIO_DEADLINE_CORRECTION_NS);
++    }
++
++    public static void reportAudioWriterWake(long releaseDeadlineNs, long wokeAtNs) {
++        long latenessNs = Math.max(0, wokeAtNs - releaseDeadlineNs);
++        latenessNs = Math.min(latenessNs, MAXIMUM_SCHEDULER_COMPENSATION_NS);
++        smoothAtomic(schedulerCompensationNs, latenessNs, SCHEDULER_FILTER_SHIFT);
++    }
++
++    public static float getAudioPlaybackSpeed(boolean drainAudioQueue) {
++        long phaseErrorNs = audioPhaseSamples.get() >= AUDIO_PHASE_WARMUP_SAMPLES ?
++                audioPhaseErrorNs() : 0;
++        long desiredSpeed = PLAYBACK_SPEED_SCALE -
++                phaseErrorNs / PLAYBACK_SPEED_ERROR_DIVISOR;
++        desiredSpeed = Math.max(MINIMUM_PLAYBACK_SPEED,
++                Math.min(desiredSpeed, MAXIMUM_PLAYBACK_SPEED));
++        if (drainAudioQueue) {
++            desiredSpeed = MAXIMUM_PLAYBACK_SPEED;
++        }
++        long speed = slewAtomic(appliedPlaybackSpeed, desiredSpeed,
++                MAXIMUM_PLAYBACK_SPEED_STEP);
++        return (float) speed / PLAYBACK_SPEED_SCALE;
++    }
++
++    public static float getCurrentAudioPlaybackSpeed() {
++        return (float) appliedPlaybackSpeed.get() / PLAYBACK_SPEED_SCALE;
++    }
++
++    public static long getVideoHoldbackNs(long nowNs) {
++        long updatedAtNs = videoUpdatedAtNs.get();
++        if (updatedAtNs == 0 || nowNs - updatedAtNs > MEDIA_CLOCK_STALE_NS) {
++            return NOMINAL_VIDEO_HOLDBACK_NS;
++        }
++        return videoHoldbackNs.get();
++    }
++
++    public static long getSchedulerCompensationNs() {
++        return schedulerCompensationNs.get();
++    }
++
++    public static long getAudioSinkLeadNs() {
++        return audioSinkLeadNs.get();
++    }
++
++    public static long getAudioQueueLeadNs() {
++        return audioQueueLeadNs.get();
++    }
++
++    public static long getAudioPhaseErrorNs() {
++        return audioPhaseErrorNs();
++    }
++
++    public static long getAudioDeadlineCorrectionNs() {
++        return audioDeadlineCorrectionNs.get();
++    }
++
++    public static long getLatestVideoMediaTimeMs() {
++        return videoMediaTimeMs.get();
++    }
++
++    public static long getVideoDepthChangeNs(long nowNs) {
++        long updatedAtNs = videoUpdatedAtNs.get();
++        long baselineHoldbackNs = videoBaselineHoldbackNs.get();
++        if (baselineHoldbackNs < 0 ||
++                videoBaselineSamples.get() < VIDEO_BASELINE_SAMPLES ||
++                nowNs - updatedAtNs > MEDIA_CLOCK_STALE_NS) {
++            return 0;
++        }
++        return videoHoldbackNs.get() - baselineHoldbackNs;
++    }
++
++    public static long getBaselineHoldbackNs() {
++        return NOMINAL_VIDEO_HOLDBACK_NS;
++    }
++
++    public static boolean isMediaTimelineActive(long mediaPresentationTimeMs,
++                                                long nowNs) {
++        return isMediaTimelineCompatible(mediaPresentationTimeMs, nowNs);
++    }
++
++    private static boolean isMediaTimelineCompatible(long mediaPresentationTimeMs,
++                                                     long nowNs) {
++        long latestVideoMediaTimeMs = videoMediaTimeMs.get();
++        long mediaUpdatedAtNs = videoMediaUpdatedAtNs.get();
++        return mediaPresentationTimeMs >= 0 &&
++                latestVideoMediaTimeMs >= 0 &&
++                mediaUpdatedAtNs > 0 &&
++                nowNs - mediaUpdatedAtNs <= MEDIA_CLOCK_STALE_NS &&
++                Math.abs(mediaPresentationTimeMs - latestVideoMediaTimeMs) <=
++                        MEDIA_TIMELINE_COMPATIBILITY_MS;
++    }
++
++    private static long audioPhaseErrorNs() {
++        return audioPhaseErrorNs.get();
++    }
++
++    private static long slewAtomic(AtomicLong value, long target, long maximumStep) {
++        long previous;
++        long next;
++        do {
++            previous = value.get();
++            long difference = target - previous;
++            long step = Math.max(-maximumStep, Math.min(difference, maximumStep));
++            next = previous + step;
++        } while (!value.compareAndSet(previous, next));
++        return next;
++    }
++
++    private static void smoothAtomic(AtomicLong value, long sample, int filterShift) {
++        long previous;
++        long filtered;
++        do {
++            previous = value.get();
++            filtered = previous + ((sample - previous) >> filterShift);
++        } while (!value.compareAndSet(previous, filtered));
++    }
++
++    private static void addClampedAtomic(AtomicLong value, long increment,
++                                         long minimum, long maximum) {
++        long previous;
++        long next;
++        do {
++            previous = value.get();
++            next = Math.max(minimum, Math.min(previous + increment, maximum));
++        } while (!value.compareAndSet(previous, next));
++    }
++}
+diff --git a/app/src/main/java/com/limelight/binding/video/VideoStallListener.java b/app/src/main/java/com/limelight/binding/video/VideoStallListener.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b49194fa670a389aa6aee791a78fd883a02b336b
+--- /dev/null
++++ b/app/src/main/java/com/limelight/binding/video/VideoStallListener.java
+@@ -0,0 +1,5 @@
++package com.limelight.binding.video;
++
++public interface VideoStallListener {
++    void requestStreamRestart(String stalledStage, long stalledDurationMs);
++}

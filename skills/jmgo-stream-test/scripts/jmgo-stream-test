@@ -267,6 +267,17 @@ else
   printf '{"motionSourceEvaluated":false}\n'
 fi
 
+latency_rc=0
+if [ "$source_check" -eq 1 ] && [ "$duration" -ge 10 ]; then
+  set +e
+  latency_metrics="$(node "$script_dir/parse-latency-log.mjs" "$work/logcat.txt")"
+  latency_rc=$?
+  set -e
+  printf '%s\n' "$latency_metrics"
+else
+  printf '{"latencyTelemetryEvaluated":false}\n'
+fi
+
 avsync_rc=0
 if [ "$audio" -eq 1 ] && [ "$duration" -ge 20 ]; then
   set +e
@@ -278,7 +289,7 @@ else
   printf '{"avSyncEvaluated":false}\n'
 fi
 
-fault_pattern='queue overflow|decoded image queue (dropped|backpressure timed out)|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer slow|prepared image queue slow|prepared image queue empty|prepared image handoff late|image writer rejected|image reader stalled|video starvation|image preparation thread restarted|WifiTracker.*fetchScanResults|FATAL EXCEPTION|input pacing late'
+fault_pattern='queue overflow|decoded image queue (dropped|backpressure timed out)|buffer underrun|Network dropped|Dequeue input buffer ran long|audio queue drops|audio media timeline rebased|AudioTrack write failed|Audio non-blocking partial|Too much pending audio|timer image ring empty|timer scheduler delay|image writer slow|prepared image queue slow|prepared image queue empty|prepared image handoff late|image writer rejected|image reader stalled|video starvation|image preparation thread restarted|WifiTracker.*fetchScanResults|FATAL EXCEPTION|input pacing late'
 faults=$(grep -Eic "$fault_pattern" "$work/logcat.txt" || true)
 printf '{"faultEvents":%s,"audioEnabled":%s,"durationSeconds":%s}\n' "$faults" "$([ "$audio" -eq 1 ] && echo true || echo false)" "$duration"
 if [ "$faults" -ne 0 ]; then
@@ -293,4 +304,4 @@ if [ -n "$screenshot" ]; then
   echo "screenshot: $screenshot" >&2
 fi
 
-if [ "$metrics_rc" -ne 0 ] || [ "$source_rc" -ne 0 ] || [ "$avsync_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi
+if [ "$metrics_rc" -ne 0 ] || [ "$source_rc" -ne 0 ] || [ "$latency_rc" -ne 0 ] || [ "$avsync_rc" -ne 0 ] || [ "$faults" -ne 0 ]; then exit 1; fi

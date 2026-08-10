@@ -53,12 +53,12 @@ function draw(now){
   ctx.fillStyle='#fff';ctx.font=`${Math.max(28,h/38)}px monospace`;
   ctx.fillText('JMGO 1080p60 MOTION + AUDIO',40,65);
   ctx.fillText(`frame ${frame}  ${now.toFixed(1)} ms`,40,115);
-  const markerSize=Math.max(18,Math.floor(h/54));
-  const markerX=20,markerY=h-markerSize-20;
-  ctx.fillStyle='#ff00ff';ctx.fillRect(markerX-4,markerY-4,markerSize*16+8,markerSize+8);
-  for(let bit=0;bit<16;bit++){
-    ctx.fillStyle=((frame>>>bit)&1)?'#fff':'#000';
-    ctx.fillRect(markerX+bit*markerSize,markerY,markerSize,markerSize);
+  const markerCells=24,markerHeight=Math.max(32,Math.floor(h/40));
+  const markerY=h-markerHeight,markerWidth=w/markerCells;
+  for(let cell=0;cell<markerCells;cell++){
+    const bit=cell<8?((0xa5>>>cell)&1):((frame>>>(cell-8))&1);
+    ctx.fillStyle=bit?'#fff':'#000';
+    ctx.fillRect(Math.floor(cell*markerWidth),markerY,Math.ceil(markerWidth),markerHeight);
   }
   frame++;
   if(frame%titleIntervalFrames===0)publish();

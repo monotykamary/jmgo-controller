@@ -2,7 +2,8 @@
 set -euo pipefail
 
 source_app=${1:-/tmp/sunshine-jmgo-v2026.726.710/cmake-build-jmgo/Sunshine.app}
-destination=${2:-/Applications/Sunshine JMGO.app}
+destination=${2:-/Applications/Sunshine JMGO Media Clock.app}
+signing_identity=${JMGO_CODESIGN_IDENTITY:--}
 
 [[ -x "$source_app/Contents/MacOS/Sunshine" ]] || {
   printf 'Built Sunshine app not found: %s\n' "$source_app" >&2
@@ -18,11 +19,11 @@ if [[ -e "$destination" ]]; then
 fi
 
 /usr/bin/ditto "$source_app" "$destination"
-/usr/bin/plutil -replace CFBundleIdentifier -string dev.lizardbyte.app.Sunshine.jmgo "$destination/Contents/Info.plist"
-/usr/bin/plutil -replace CFBundleDisplayName -string 'Sunshine JMGO' "$destination/Contents/Info.plist"
-/usr/bin/plutil -replace CFBundleName -string 'Sunshine JMGO' "$destination/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleIdentifier -string dev.lizardbyte.app.Sunshine.jmgo.media "$destination/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleDisplayName -string 'Sunshine JMGO Media Clock' "$destination/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleName -string 'Sunshine JMGO Media Clock' "$destination/Contents/Info.plist"
 /usr/bin/xattr -cr "$destination"
-/usr/bin/codesign --force --deep --sign - "$destination"
+/usr/bin/codesign --force --deep --timestamp --sign "$signing_identity" "$destination"
 /usr/bin/codesign --verify --deep --strict "$destination"
 
 firewall=/usr/libexec/ApplicationFirewall/socketfilterfw

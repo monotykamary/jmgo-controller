@@ -8,7 +8,10 @@ import { findExecutable, runProcess } from "./process.js";
 export const ARTEMIS_PACKAGE = "com.limelight.noirdebug";
 export const JMGO_SETTINGS_PACKAGE = "com.jmgo.setting.x";
 const ARTEMIS_SHORTCUT_COMPONENT = `${ARTEMIS_PACKAGE}/com.limelight.ShortcutTrampoline`;
-const JMGO_SUNSHINE_APP = "/Applications/Sunshine JMGO.app";
+const JMGO_SUNSHINE_APPS = [
+  "/Applications/Sunshine JMGO Media Clock.app",
+  "/Applications/Sunshine JMGO.app",
+] as const;
 
 export type SunshineApp = {
   index: number;
@@ -328,15 +331,20 @@ async function sunshineRunning(pgrep: string): Promise<boolean> {
   return result.code === 0;
 }
 
-async function sunshineApplicationTarget(): Promise<string> {
-  const configured = process.env.JMGO_SUNSHINE_APP?.trim();
+export async function sunshineApplicationTarget(
+  configured = process.env.JMGO_SUNSHINE_APP?.trim(),
+  candidates: readonly string[] = JMGO_SUNSHINE_APPS,
+): Promise<string> {
   if (configured) return configured;
-  try {
-    await access(JMGO_SUNSHINE_APP);
-    return JMGO_SUNSHINE_APP;
-  } catch {
-    return "Sunshine";
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next compatible side-by-side installation.
+    }
   }
+  return "Sunshine";
 }
 
 export function sunshineOpenArgs(application: string): string[] {

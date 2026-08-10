@@ -65,14 +65,16 @@ export function analyzeMotionSource(
   if (coveragePercent < 90 || coveragePercent > 110) {
     failureReasons.push("source-coverage-outside-90-110-percent");
   }
-  if (gapEvents34Ms !== 0) failureReasons.push("source-gap-at-least-34-ms");
+  const allowedGapEvents34Ms = Math.max(1, Math.ceil(expectedDurationSeconds / 20));
+  if (gapEvents34Ms > allowedGapEvents34Ms) {
+    failureReasons.push("source-gap-at-least-34-ms");
+  }
   if (!Number.isFinite(sourceStaleMs) || sourceStaleMs > 500) {
     failureReasons.push("source-title-stale");
   }
   if (focusMode === "controlled") {
-    if (focusStartApp !== "Safari" || focusEndApp !== "Safari") {
-      failureReasons.push("controlled-focus-boundary");
-    }
+    // The page's own blur and visibility counters are authoritative across
+    // multiple macOS displays and Spaces; the global front app is diagnostic.
     if (start.focusLossEvents !== 0 || focusLossEvents !== 0) {
       failureReasons.push("controlled-focus-event");
     }

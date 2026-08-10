@@ -1,17 +1,101 @@
+diff --git a/src/audio.cpp b/src/audio.cpp
+index 5f4c9e43a175dbf20481771cd0d73fcb770635b7..f308e17519a392cc04bbfb1e2ba1abb84798fb20 100644
+--- a/src/audio.cpp
++++ b/src/audio.cpp
+@@ -24,9 +24,17 @@ namespace audio {
+    */
+   using opus_t = util::safe_ptr<OpusMSEncoder, opus_multistream_encoder_destroy>;
+   /**
+-   * @brief Shared queue carrying captured PCM sample buffers to the encoder thread.
++   * @brief Captured PCM packet and its host steady-clock midpoint.
+    */
+-  using sample_queue_t = std::shared_ptr<safe::queue_t<std::vector<float>>>;
++  struct captured_sample_t {
++    std::chrono::steady_clock::time_point capture_timestamp;  ///< Packet midpoint.
++    std::vector<float> samples;  ///< Interleaved floating-point PCM samples.
++  };
++
++  /**
++   * @brief Shared queue carrying timestamped PCM packets to the encoder thread.
++   */
++  using sample_queue_t = std::shared_ptr<safe::queue_t<captured_sample_t>>;
+ 
+   static int start_audio_control(audio_ctx_t &ctx);
+   static void stop_audio_control(audio_ctx_t &);
+@@ -138,7 +146,7 @@ namespace audio {
+     while (auto sample = samples->pop()) {
+       buffer_t packet {1400};
+ 
+-      int bytes = opus_multistream_encode_float(opus.get(), sample->data(), frame_size, std::begin(packet), (opus_int32) packet.size());
++      int bytes = opus_multistream_encode_float(opus.get(), sample->samples.data(), frame_size, std::begin(packet), (opus_int32) packet.size());
+       if (bytes < 0) {
+         BOOST_LOG(error) << "Couldn't encode audio: "sv << opus_strerror(bytes);
+         packets->stop();
+@@ -147,7 +155,7 @@ namespace audio {
+       }
+ 
+       packet.fake_resize(bytes);
+-      packets->raise(channel_data, std::move(packet));
++      packets->raise(packet_t {channel_data, std::move(packet), sample->capture_timestamp});
+     }
+   }
+ 
+@@ -269,7 +277,11 @@ namespace audio {
+           return;
+       }
+ 
+-      samples->raise(std::move(sample_buffer));
++      // Timestamp the midpoint of this PCM packet in the same steady-clock domain
++      // used by video capture. The shared RTP timeline is anchored from this value.
++      auto capture_timestamp = std::chrono::steady_clock::now() -
++                               std::chrono::milliseconds(config.packetDuration) / 2;
++      samples->raise(captured_sample_t {capture_timestamp, std::move(sample_buffer)});
+     }
+   }
+ 
+diff --git a/src/audio.h b/src/audio.h
+index e0e919a54d41a8ed76fcabe5129d1a585c968502..543edf01b4ba4d1156228e1f4c3ac403fd07e061 100644
+--- a/src/audio.h
++++ b/src/audio.h
+@@ -10,6 +10,7 @@
+ #include "utility.h"
+ 
+ #include <bitset>
++#include <chrono>
+ 
+ namespace audio {
+   /**
+@@ -91,9 +92,13 @@ namespace audio {
+    */
+   using buffer_t = util::buffer_t<std::uint8_t>;
+   /**
+-   * @brief Encoded audio packet paired with platform channel metadata.
++   * @brief Encoded audio packet paired with its capture time and platform metadata.
+    */
+-  using packet_t = std::pair<void *, buffer_t>;
++  struct packet_t {
++    void *channel_data;  ///< Platform-specific stream session metadata.
++    buffer_t data;  ///< Encoded Opus packet payload.
++    std::chrono::steady_clock::time_point capture_timestamp;  ///< PCM capture midpoint.
++  };
+   /**
+    * @brief Shared mailbox reference to the global audio context.
+    */
 diff --git a/src/platform/macos/av_video.m b/src/platform/macos/av_video.m
-index 5ad931c5..f3840332 100644
+index 5ad931c5a638b76a801b71461223952158b847c8..b08f6473748c186d0b640f9d4b3b26ccc1c2cde3 100644
 --- a/src/platform/macos/av_video.m
 +++ b/src/platform/macos/av_video.m
-@@ -59,6 +59,8 @@
+@@ -59,6 +59,9 @@
  - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
    @synchronized(self) {
      AVCaptureVideoDataOutput *videoOutput = [[AVCaptureVideoDataOutput alloc] init];
-+    // Preserve the 60 Hz capture cadence through brief encoder backpressure.
-+    [videoOutput setAlwaysDiscardsLateVideoFrames:NO];
++    // Prefer the newest desktop image when encoding falls behind; Sunshine rate
++    // control and the client compositor preserve output cadence without stale capture.
++    [videoOutput setAlwaysDiscardsLateVideoFrames:YES];
  
      [videoOutput setVideoSettings:@{
        (NSString *) kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:self.pixelFormat],
-@@ -67,7 +69,7 @@
+@@ -67,7 +70,7 @@
        (NSString *) AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
      }];
  
@@ -20,3 +104,144 @@ index 5ad931c5..f3840332 100644
      dispatch_queue_t recordingQueue = dispatch_queue_create("videoCaptureQueue", qos);
      [videoOutput setSampleBufferDelegate:self queue:recordingQueue];
  
+diff --git a/src/platform/macos/display.mm b/src/platform/macos/display.mm
+index d5fe3d024b25885ddf3dee7c57db00fff6920c80..596bb31b3289d708cc16f75d1e30da9b891eb774 100644
+--- a/src/platform/macos/display.mm
++++ b/src/platform/macos/display.mm
+@@ -93,6 +93,7 @@ namespace platf {
+         img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
+         img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
+         img_out->pixel_pitch = img_out->row_pitch / img_out->width;
++        img_out->frame_timestamp = std::chrono::steady_clock::now();
+ 
+         old_data_retainer = nullptr;
+ 
+@@ -177,6 +178,7 @@ namespace platf {
+         img->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
+         img->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
+         img->pixel_pitch = img->row_pitch / img->width;
++        img->frame_timestamp = std::chrono::steady_clock::now();
+ 
+         old_data_retainer = nullptr;
+ 
+diff --git a/src/stream.cpp b/src/stream.cpp
+index a366ede5013b4f704fc854bfacf679dcc57be5f5..35ea783d6ea36013b750b574e491f42a61e045fa 100644
+--- a/src/stream.cpp
++++ b/src/stream.cpp
+@@ -475,6 +475,8 @@ namespace stream {
+ 
+     safe::mail_t mail;  ///< Mailbox used to distribute packets and lifecycle events.
+ 
++    std::chrono::steady_clock::time_point media_epoch;  ///< Shared audio/video RTP epoch.
++
+     std::shared_ptr<input::input_t> input;  ///< Platform input device state for this stream.
+ 
+     std::jthread audioThread;  ///< Audio thread.
+@@ -490,6 +492,8 @@ namespace stream {
+       std::string ping_payload;
+ 
+       int lowseq;
++      std::uint32_t timestamp;
++      bool timestamp_initialized;  ///< Whether video RTP time has emitted its first value.
+       udp::endpoint peer;
+ 
+       std::optional<crypto::cipher::gcm_t> cipher;
+@@ -509,6 +513,7 @@ namespace stream {
+       // avRiKeyId == util::endian::big(First (sizeof(avRiKeyId)) bytes of launch_session->iv)
+       std::uint32_t avRiKeyId;
+       std::uint32_t timestamp;
++      bool timestamp_initialized;  ///< Whether audio RTP time is anchored to media_epoch.
+       udp::endpoint peer;
+ 
+       util::buffer_t<char> shards;
+@@ -1468,7 +1473,6 @@ namespace stream {
+   void videoBroadcastThread(udp::socket &sock) {
+     auto shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
+     auto packets = mail::man->queue<video::packet_t>(mail::video_packets);
+-    auto video_epoch = std::chrono::steady_clock::now();
+ 
+     // Video traffic is sent on this thread
+     platf::set_thread_name("stream::videoBroadcast");
+@@ -1672,7 +1676,19 @@ namespace stream {
+             frame_is_dupe = true;
+           }
+           using rtp_tick = std::chrono::duration<uint32_t, std::ratio<1, 90000>>;
+-          uint32_t timestamp = std::chrono::round<rtp_tick>(*packet->frame_timestamp - video_epoch).count();
++          uint32_t timestamp = std::chrono::round<rtp_tick>(
++            *packet->frame_timestamp - session->media_epoch
++          ).count();
++          constexpr uint32_t minimum_rtp_step = 90;
++          if (session->video.timestamp_initialized &&
++              static_cast<int32_t>(timestamp - session->video.timestamp) <= 0) {
++            auto capture_timestamp = timestamp;
++            timestamp = session->video.timestamp + minimum_rtp_step;
++            BOOST_LOG(info) << "JMGO video RTP timestamp clamped from "sv
++                            << capture_timestamp << " to "sv << timestamp;
++          }
++          session->video.timestamp = timestamp;
++          session->video.timestamp_initialized = true;
+ 
+           // set FEC info now that we know for sure what our percentage will be for this frame
+           for (auto x = 0; x < shards.size(); ++x) {
+@@ -1823,10 +1839,19 @@ namespace stream {
+         break;
+       }
+ 
+-      TUPLE_2D_REF(channel_data, packet_data, *packet);
++      auto &[channel_data, packet_data, capture_timestamp] = *packet;
+       auto session = (session_t *) channel_data;
+ 
+       auto sequenceNumber = session->audio.sequenceNumber;
++      if (!session->audio.timestamp_initialized) {
++        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
++          capture_timestamp - session->media_epoch
++        ).count();
++        session->audio.timestamp = static_cast<std::uint32_t>(std::max<std::int64_t>(0, elapsed_ms));
++        session->audio.timestamp_initialized = true;
++        BOOST_LOG(info) << "JMGO shared media timeline audio started at "sv
++                        << session->audio.timestamp << " ms"sv;
++      }
+       auto timestamp = session->audio.timestamp;
+ 
+       *(std::uint32_t *) iv.data() = util::endian::big<std::uint32_t>(session->audio.avRiKeyId + sequenceNumber);
+@@ -2259,6 +2284,7 @@ namespace stream {
+       auto mail = std::make_shared<safe::mail_raw_t>();
+ 
+       session->shutdown_event = mail->event<bool>(mail::shutdown);
++      session->media_epoch = std::chrono::steady_clock::now();
+       session->launch_session_id = launch_session.id;
+       session->client_cert = launch_session.client_cert;
+ 
+@@ -2276,6 +2302,8 @@ namespace stream {
+       session->video.idr_events = mail->event<bool>(mail::idr);
+       session->video.invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
+       session->video.lowseq = 0;
++      session->video.timestamp = 0;
++      session->video.timestamp_initialized = false;
+       session->video.ping_payload = launch_session.av_ping_payload;
+       if (config.encryptionFlagsEnabled & SS_ENC_VIDEO) {
+         BOOST_LOG(info) << "Video encryption enabled"sv;
+@@ -2317,6 +2345,7 @@ namespace stream {
+       session->audio.avRiKeyId = util::endian::big(*(std::uint32_t *) launch_session.iv.data());
+       session->audio.sequenceNumber = 0;
+       session->audio.timestamp = 0;
++      session->audio.timestamp_initialized = false;
+ 
+       session->control.peer = nullptr;
+       session->state.store(state_e::STOPPED, std::memory_order_relaxed);
+diff --git a/tests/unit/test_audio.cpp b/tests/unit/test_audio.cpp
+index b21087a8a7279b5ed60ee8cf7cc55beb8acc2a7a..d69f4000dd5f40d9c4f819bfd8eda9bd8c80ed24 100644
+--- a/tests/unit/test_audio.cpp
++++ b/tests/unit/test_audio.cpp
+@@ -57,9 +57,10 @@ TEST_P(AudioTest, TestEncode) {
+       if (shutdown_event->peek()) {
+         break;
+       }
+-      if (auto packet_data = packet->second; packet_data.size() == 0) {
++      if (auto packet_data = packet->data; packet_data.size() == 0) {
+         FAIL() << "Empty packet data";
+       }
++      EXPECT_NE(packet->capture_timestamp, std::chrono::steady_clock::time_point {});
+     }
+   });
+   audio::capture(m_mail, m_config, nullptr);
