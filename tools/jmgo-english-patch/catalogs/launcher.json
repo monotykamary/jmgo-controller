@@ -1,4 +1,9 @@
 {
+  "accessibility": {
+    "立即播放": "Play Now",
+    "坚果投屏": "JMGO Cast",
+    "坚果音乐": "JMGO Music"
+  },
   "strings": {
     "abandon": "give up",
     "about_to_enter_dream": "About to enter screensaver mode",
@@ -364,7 +369,7 @@
     "home_search_tips": "Click to search and filter videos",
     "home_statusbar_multi_mode_tip": "Switch mode up",
     "home_top_application": "My application",
-    "home_top_appstore": "Application Center",
+    "home_top_appstore": "App Center",
     "home_top_child_search": "Search",
     "home_top_file_upload": "File upload",
     "home_top_msg_center": "Message center",
@@ -970,12 +975,12 @@
     "shortcut_jg_iqy": "JMGO Kiwi Fruit",
     "shortcut_jg_yk": "JMGOYouku",
     "shortcut_media_hub": "Home Video Library",
-    "shortcut_movie_record": "Movie viewing records",
+    "shortcut_movie_record": "Watch History",
     "shortcut_record_empty_desc": "Aggregate records from mainstream video platforms, making watching dramas worry-free and convenient",
     "shortcut_record_empty_desc_refuse": "Only sync official movie and TV content history",
     "shortcut_record_empty_title": "Movie viewing history, one-click synchronization",
     "shortcut_record_empty_title_refuse": "Quickly view viewing records and collections",
-    "shortcut_video": "video",
+    "shortcut_video": "Videos",
     "skip": "skip",
     "skip_ad_tips": "Ad skipping privileges",
     "skip_header": "Opening and ending",

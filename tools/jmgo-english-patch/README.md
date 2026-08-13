@@ -41,8 +41,9 @@ obtain temporary build inputs. It rejects a target unless package name,
 version, signing certificate, complete Chinese-resource inventory, and source
 fingerprint match the pinned firmware.
 
-`install.mjs` is a dry run unless `--apply` is explicitly supplied. The
-accessibility service must still be enabled manually in Android settings.
+`install.mjs` is a dry run unless `--apply` is explicitly supplied. On this
+firmware it activates the patch through JMGO Hippo's existing accessibility
+service API and verifies that all previously enabled services remain present.
 
 Do not delete the generated signing keystore after installing a build. Android
 requires the same signer for later upgrades. For release builds, use your own
@@ -117,10 +118,15 @@ node tools/jmgo-english-patch/install.mjs \
   --apply
 ```
 
-The installer installs the single APK and opens Android's Accessibility
-settings. It does not enable the service itself. Disable the service to stop the
-patch immediately; uninstalling the APK is the complete rollback. The dry-run
-output prints the uninstall command.
+The installer installs the single APK and activates its accessibility service.
+JMGO firmware blocks direct ADB edits and does not expose Android's standard
+Accessibility settings screen, but its already-enabled Hippo key service exposes
+`action.jmgo.request.accessibility.service` for this purpose. The installer uses
+that vendor API, verifies that every previously enabled service remains present,
+and grants the patch no secure-settings permission.
+
+The dry-run output also prints a vendor-API disable command followed by the
+uninstall command for complete rollback.
 
 ## Test
 

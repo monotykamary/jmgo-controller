@@ -314,11 +314,19 @@ public final class EnglishAccessibilityService extends AccessibilityService {
             );
             float density = getResources().getDisplayMetrics().density;
             int padding = Math.max(2, Math.round(3 * density));
+            float desiredSize = Math.max(10 * density, Math.min(22 * density, bounds.height() * 0.58f));
+            foreground.setTextSize(desiredSize);
+            int preferredWidth = Math.min(
+                Math.max(bounds.width(), getWidth() / 3),
+                Math.round(foreground.measureText(label.text)) + 2 * padding
+            );
+            int rightLimit = bounds.width() < getWidth() / 8 && bounds.left < getWidth() / 5
+                ? getWidth() / 5
+                : getWidth() - padding;
+            bounds.right = Math.max(bounds.right, Math.min(rightLimit, bounds.left + preferredWidth));
             canvas.drawRect(bounds, background);
 
             int width = Math.max(1, bounds.width() - 2 * padding);
-            float desiredSize = Math.max(10 * density, Math.min(22 * density, bounds.height() * 0.58f));
-            foreground.setTextSize(desiredSize);
             StaticLayout layout = StaticLayout.Builder
                 .obtain(label.text, 0, label.text.length(), foreground, width)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER)

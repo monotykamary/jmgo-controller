@@ -59,6 +59,7 @@ test("validateCatalog rejects changed Android placeholders", () => {
 test("accessibility catalog normalizes text and retains templates", () => {
   const resources = parseAapt2Resources(DUMP);
   const catalog = {
+    accessibility: { "硬编码标签": "Runtime-only label" },
     strings: { formatted: "Connected to %1$s; %2$d devices", multiline: "First line Second line" },
     arrays: { modes: ["English", "Automatic mode", "Quoted mode"] },
   };
@@ -68,9 +69,21 @@ test("accessibility catalog normalizes text and retains templates", () => {
     { fixture: catalog },
   );
   assert.equal(result.packages["com.example"].exact["第一行 第二行"], "First line Second line");
+  assert.equal(result.packages["com.example"].exact["硬编码标签"], "Runtime-only label");
   assert.equal(result.packages["com.example"].templates.length, 1);
   assert.equal(normalizeAccessibilityText(" one\u00a0 two\nthree "), "one two three");
   assert.deepEqual(formatSignature("100% and %1$s / %02d"), ["%02d", "%1$s"]);
+});
+
+test("catalog validation rejects invalid runtime-only translations", () => {
+  const resources = parseAapt2Resources(DUMP);
+  const catalog = {
+    accessibility: { "动态标签": "仍是中文" },
+    strings: { formatted: "Connected to %1$s with %2$d devices", multiline: "First line\nSecond line" },
+    arrays: { modes: ["English", "Automatic mode", "Quoted mode"] },
+  };
+  const target = { id: "fixture", counts: { strings: 2, arrays: 1 } };
+  assert.throws(() => validateCatalog(resources, catalog, target), /still contains CJK text/u);
 });
 
 test("accessibility catalog accepts duplicate sources with identical translations", () => {

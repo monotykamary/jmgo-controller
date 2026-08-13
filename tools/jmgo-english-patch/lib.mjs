@@ -199,6 +199,18 @@ export function validateCatalog(resources, catalog, target) {
     });
   }
 
+  for (const [source, translation] of Object.entries(catalog.accessibility ?? {})) {
+    if (!CJK_PATTERN.test(source)) errors.push(`accessibility/${source} has no CJK source text`);
+    if (typeof translation !== "string" || translation.trim() === "") {
+      errors.push(`accessibility/${source} has an empty or non-string translation`);
+      continue;
+    }
+    if (CJK_PATTERN.test(translation)) errors.push(`accessibility/${source} still contains CJK text`);
+    if (!sameStrings(formatSignature(source), formatSignature(translation))) {
+      errors.push(`accessibility/${source} changed format placeholders`);
+    }
+  }
+
   const fingerprint = sourceFingerprint(resources, catalog);
   if (target.sourceFingerprintSha256 && fingerprint !== target.sourceFingerprintSha256) {
     errors.push(`source fingerprint is ${fingerprint}, expected ${target.sourceFingerprintSha256}`);
@@ -244,6 +256,9 @@ export function buildAccessibilityCatalog(targets, resourcesById, catalogsById) 
       }
     };
 
+    for (const [source, translation] of Object.entries(catalog.accessibility ?? {})) {
+      add(source, translation, `accessibility/${source}`);
+    }
     for (const [name, translation] of Object.entries(catalog.strings ?? {})) {
       add(resources.strings[name][""], translation, `string/${name}`);
     }

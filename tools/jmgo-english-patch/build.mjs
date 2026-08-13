@@ -208,7 +208,7 @@ function listJavaSources(directory) {
   return output;
 }
 
-function buildCompanion(accessibilityCatalog, work, output, signing, tools, java) {
+function buildCompanion(accessibilityCatalog, work, output, signing, tools, java, version) {
   const directory = join(work, "companion");
   const classes = join(directory, "classes");
   const dex = join(directory, "dex");
@@ -229,7 +229,7 @@ function buildCompanion(accessibilityCatalog, work, output, signing, tools, java
   const unsigned = join(directory, "unsigned.apk");
   run(join(tools.buildTools, "aapt2"), [
     "link", "--manifest", join(ROOT, "android", "AndroidManifest.xml"), "-I", tools.androidJar,
-    "--min-sdk-version", "30", "--target-sdk-version", "30", "--version-code", "1", "--version-name", "0.1.0",
+    "--min-sdk-version", "30", "--target-sdk-version", "30", "--version-code", String(version.code), "--version-name", version.name,
     "-A", assets, "-o", unsigned, compiled,
   ]);
   run("zip", ["-q", "-j", unsigned, join(dex, "classes.dex")]);
@@ -271,11 +271,14 @@ function main() {
     const accessibility = buildAccessibilityCatalog(metadata.targets, resources, catalogs);
     if (accessibility.conflicts.length > 0) throw new Error(`Accessibility catalogue conflicts: ${accessibility.conflicts.join(", ")}`);
     delete accessibility.conflicts;
-    artifacts.push(buildCompanion(accessibility, work, options.output, signing, tools, java));
+    artifacts.push(buildCompanion(accessibility, work, options.output, signing, tools, java, {
+      code: metadata.patchVersionCode,
+      name: metadata.patchVersion,
+    }));
 
     const artifactManifest = {
       schemaVersion: 1,
-      patchVersion: "0.1.0",
+      patchVersion: metadata.patchVersion,
       generatedAt: new Date().toISOString(),
       targets: reports,
       artifacts: artifacts.map((path) => ({ file: basename(path), sha256: sha256(path) })),

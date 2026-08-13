@@ -1,6 +1,7 @@
 package works.earendil.jmgo.english.patch;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -25,9 +26,23 @@ public final class MainActivity extends Activity {
         return view;
     }
 
+    private boolean isServiceEnabled() {
+        String enabled = Settings.Secure.getString(
+            getContentResolver(),
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        );
+        if (enabled == null || enabled.isEmpty()) return false;
+        ComponentName service = new ComponentName(this, EnglishAccessibilityService.class);
+        for (String value : enabled.split(":")) {
+            if (service.equals(ComponentName.unflattenFromString(value))) return true;
+        }
+        return false;
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        boolean active = isServiceEnabled();
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -38,7 +53,15 @@ public final class MainActivity extends Activity {
         TextView title = text("JMGO English Patch", 30, Color.WHITE);
         layout.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView body = text("Enable the accessibility service to draw English labels over known untranslated JMGO text in Settings, Launcher, Setup Guide, and System UI.", 18, Color.LTGRAY);
+        String statusValue = active
+            ? "Status: active. English labels will appear in supported JMGO screens."
+            : "Status: not active. Run the ADB installer to activate the service.";
+        TextView status = text(statusValue, 19, active ? Color.rgb(129, 199, 132) : Color.rgb(255, 183, 77));
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
+        statusParams.topMargin = dp(this, 24);
+        layout.addView(status, statusParams);
+
+        TextView body = text("The patch draws English labels over known untranslated JMGO text in Settings, Launcher, Setup Guide, and System UI.", 18, Color.LTGRAY);
         LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(-1, -2);
         bodyParams.topMargin = dp(this, 24);
         layout.addView(body, bodyParams);
@@ -48,16 +71,19 @@ public final class MainActivity extends Activity {
         privacyParams.topMargin = dp(this, 20);
         layout.addView(privacy, privacyParams);
 
+        Intent accessibilitySettings = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
         Button open = new Button(this);
-        open.setText("Open Accessibility settings");
+        boolean settingsAvailable = accessibilitySettings.resolveActivity(getPackageManager()) != null;
+        open.setText(settingsAvailable ? "Open Accessibility settings" : "Accessibility settings unavailable on this firmware");
         open.setTextSize(18);
         open.setFocusable(true);
-        open.setOnClickListener((View ignored) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        open.setEnabled(settingsAvailable);
+        if (settingsAvailable) open.setOnClickListener((View ignored) -> startActivity(accessibilitySettings));
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-2, dp(this, 64));
         buttonParams.topMargin = dp(this, 36);
         layout.addView(open, buttonParams);
 
         setContentView(layout);
-        open.requestFocus();
+        if (settingsAvailable) open.requestFocus();
     }
 }

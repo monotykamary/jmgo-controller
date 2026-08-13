@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "patchVersion": "0.1.0",
+  "patchVersion": "0.1.1",
+  "patchVersionCode": 2,
   "companionPackage": "works.earendil.jmgo.english.patch",
   "targets": [
     {
