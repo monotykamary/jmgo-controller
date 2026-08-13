@@ -52,6 +52,10 @@ function canonicalComponent(value) {
   return `${packageName}/${className.startsWith(".") ? packageName + className : className}`;
 }
 
+function serviceComponent(packageName) {
+  return `${packageName}/${packageName}.EnglishAccessibilityService`;
+}
+
 function enabledServices(serial) {
   const value = execFileSync(
     "adb",
@@ -59,6 +63,10 @@ function enabledServices(serial) {
     { encoding: "utf8" },
   ).trim();
   return value === "null" || value === "" ? [] : value.split(":").filter(Boolean);
+}
+
+function packageInstalled(serial, packageName) {
+  return execFileSync("adb", ["-s", serial, "shell", "pm", "path", packageName], { encoding: "utf8" }).trim() !== "";
 }
 
 function accessibilityState(serial, packageName) {
@@ -81,6 +89,13 @@ function waitUntilBound(serial, packageName) {
   throw new Error(`English accessibility service did not bind cleanly (bound=${state.bound}, crashed=${state.crashed})`);
 }
 
+function vendorCommand(serial, component, enabled) {
+  return ["adb", [
+    "-s", serial, "shell", "am", "broadcast", "-a", VENDOR_ACTION,
+    "--es", VENDOR_COMPONENT_EXTRA, component, "--ez", "enabled", String(enabled),
+  ]];
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const metadata = JSON.parse(readFileSync(join(ROOT, "catalogs", "targets.json"), "utf8"));
@@ -88,18 +103,17 @@ function main() {
   if (!existsSync(apk)) throw new Error("Missing artifact: jmgo-english-accessibility.apk");
 
   const packageName = metadata.companionPackage;
-  const service = `${packageName}/${packageName}.EnglishAccessibilityService`;
+  const service = serviceComponent(packageName);
+  const legacyPackages = metadata.legacyCompanionPackages ?? [];
   const install = ["adb", ["-s", options.serial, "install", "-r", apk]];
-  const vendorCommand = (enabled) => ["adb", [
-    "-s", options.serial, "shell", "am", "broadcast", "-a", VENDOR_ACTION,
-    "--es", VENDOR_COMPONENT_EXTRA, service, "--ez", "enabled", String(enabled),
-  ]];
-  const disable = vendorCommand(false);
-  const enable = vendorCommand(true);
+  const disableLegacy = legacyPackages.map((legacy) => vendorCommand(options.serial, serviceComponent(legacy), false));
+  const enable = vendorCommand(options.serial, service, true);
+  const disable = vendorCommand(options.serial, service, false);
 
   if (!options.apply) {
     console.log("Dry run only. Re-run with --apply to modify the projector:\n");
-    for (const [command, args] of [install, disable, enable]) console.log(commandLine(command, args));
+    for (const [command, args] of [install, ...disableLegacy, enable]) console.log(commandLine(command, args));
+    for (const legacy of legacyPackages) console.log(commandLine("adb", ["-s", options.serial, "uninstall", legacy]));
     console.log("\nRollback:");
     console.log(commandLine(...disable));
     console.log(commandLine("adb", ["-s", options.serial, "uninstall", packageName]));
@@ -107,23 +121,37 @@ function main() {
   }
 
   const before = enabledServices(options.serial);
-  if (!new Set(before.map(canonicalComponent)).has(canonicalComponent(VENDOR_SERVICE))) {
+  const beforeCanonical = new Set(before.map(canonicalComponent));
+  if (!beforeCanonical.has(canonicalComponent(VENDOR_SERVICE))) {
     throw new Error("JMGO Hippo accessibility service is not enabled; refusing unsafe activation");
   }
+  const installedLegacy = legacyPackages.filter((legacy) => packageInstalled(options.serial, legacy));
+  const enabledLegacy = legacyPackages.filter((legacy) => beforeCanonical.has(canonicalComponent(serviceComponent(legacy))));
 
   run(...install);
-  run(...disable);
-  run(...enable);
-  waitUntilBound(options.serial, packageName);
+  try {
+    for (const command of disableLegacy) run(...command);
+    run(...enable);
+    waitUntilBound(options.serial, packageName);
+  } catch (error) {
+    try {
+      run(...disable);
+      for (const legacy of enabledLegacy) run(...vendorCommand(options.serial, serviceComponent(legacy), true));
+    } catch (rollbackError) {
+      error.message += `; legacy restoration also failed: ${rollbackError.message}`;
+    }
+    throw error;
+  }
 
   const after = enabledServices(options.serial);
   const afterCanonical = new Set(after.map(canonicalComponent));
-  const removed = before
-    .filter((component) => canonicalComponent(component) !== canonicalComponent(service))
+  const intentional = new Set([canonicalComponent(service), ...legacyPackages.map((legacy) => canonicalComponent(serviceComponent(legacy)))]);
+  const removed = before.filter((component) => !intentional.has(canonicalComponent(component)))
     .filter((component) => !afterCanonical.has(canonicalComponent(component)));
   if (removed.length > 0) throw new Error(`Activation removed existing accessibility services: ${removed.join(", ")}`);
   if (!afterCanonical.has(canonicalComponent(service))) throw new Error("English accessibility service was not enabled");
 
+  for (const legacy of installedLegacy) run("adb", ["-s", options.serial, "uninstall", legacy]);
   console.log("JMGO English Patch is installed and its service is active through the vendor accessibility API.");
 }
 

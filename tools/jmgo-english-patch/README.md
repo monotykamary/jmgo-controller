@@ -127,10 +127,15 @@ that vendor API, refreshes only the patch component, verifies that every
 previously enabled service remains present, and requires the patch service to be
 bound without a crash before succeeding.
 
-The APK intentionally has no launcher activity. Hippo force-stops an app when it
-is left with the HOME key, which would also kill an accessibility service in the
-same package. Installation therefore leaves the current projector screen
-unchanged. The patch has no secure-settings permission.
+The APK intentionally has no launcher activity and uses the package ID
+`com.jmgo.middleware.service`. That ID is an exact entry in Hippo's background
+cleaner allowlist and is not installed by any package on the pinned firmware.
+Without an allowlisted ID, Hippo force-stops a user accessibility service roughly
+one minute after it starts. The patch does not replace a JMGO package or gain
+system privileges; the installer verifies compatibility through installation and
+migrates the previous `works.earendil.jmgo.english.patch` package when present.
+Installation leaves the current projector screen unchanged. The patch has no
+secure-settings permission.
 
 The dry-run output also prints a vendor-API disable command followed by the
 uninstall command for complete rollback.

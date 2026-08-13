@@ -1,4 +1,4 @@
-package works.earendil.jmgo.english.patch;
+package com.jmgo.middleware.service;
 
 import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
