@@ -9,6 +9,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const VENDOR_ACTION = "action.jmgo.request.accessibility.service";
 const VENDOR_COMPONENT_EXTRA = "compontentNameStr";
 const VENDOR_SERVICE = "com.jmgo.hippo/com.jmgo.middleware.service.JmgoKeyAccessibilityService";
+const PATCH_BOUND_MARKER = "Service[label=JMGO English Patch,";
 
 function parseArgs(argv) {
   const options = { artifacts: join(ROOT, ".build", "artifacts"), apply: false };
@@ -60,6 +61,26 @@ function enabledServices(serial) {
   return value === "null" || value === "" ? [] : value.split(":").filter(Boolean);
 }
 
+function accessibilityState(serial, packageName) {
+  const dump = execFileSync("adb", ["-s", serial, "shell", "dumpsys", "accessibility"], { encoding: "utf8" });
+  const boundStart = dump.indexOf("Bound services:");
+  const enabledStart = dump.indexOf("Enabled services:", boundStart);
+  const crashedStart = dump.indexOf("Crashed services:", enabledStart);
+  const bound = boundStart >= 0 && enabledStart > boundStart ? dump.slice(boundStart, enabledStart) : "";
+  const crashed = crashedStart >= 0 ? dump.slice(crashedStart) : "";
+  return { bound: bound.includes(PATCH_BOUND_MARKER), crashed: crashed.includes(packageName) };
+}
+
+function waitUntilBound(serial, packageName) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const state = accessibilityState(serial, packageName);
+    if (state.bound && !state.crashed) return;
+    execFileSync("adb", ["-s", serial, "shell", "sleep", "1"]);
+  }
+  const state = accessibilityState(serial, packageName);
+  throw new Error(`English accessibility service did not bind cleanly (bound=${state.bound}, crashed=${state.crashed})`);
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const metadata = JSON.parse(readFileSync(join(ROOT, "catalogs", "targets.json"), "utf8"));
@@ -69,13 +90,16 @@ function main() {
   const packageName = metadata.companionPackage;
   const service = `${packageName}/${packageName}.EnglishAccessibilityService`;
   const install = ["adb", ["-s", options.serial, "install", "-r", apk]];
-  const enable = ["adb", ["-s", options.serial, "shell", "am", "broadcast", "-a", VENDOR_ACTION, "--es", VENDOR_COMPONENT_EXTRA, service, "--ez", "enabled", "true"]];
-  const launch = ["adb", ["-s", options.serial, "shell", "am", "start", "-W", "-n", `${packageName}/.MainActivity`]];
-  const disable = ["adb", ["-s", options.serial, "shell", "am", "broadcast", "-a", VENDOR_ACTION, "--es", VENDOR_COMPONENT_EXTRA, service, "--ez", "enabled", "false"]];
+  const vendorCommand = (enabled) => ["adb", [
+    "-s", options.serial, "shell", "am", "broadcast", "-a", VENDOR_ACTION,
+    "--es", VENDOR_COMPONENT_EXTRA, service, "--ez", "enabled", String(enabled),
+  ]];
+  const disable = vendorCommand(false);
+  const enable = vendorCommand(true);
 
   if (!options.apply) {
     console.log("Dry run only. Re-run with --apply to modify the projector:\n");
-    for (const [command, args] of [install, enable, launch]) console.log(commandLine(command, args));
+    for (const [command, args] of [install, disable, enable]) console.log(commandLine(command, args));
     console.log("\nRollback:");
     console.log(commandLine(...disable));
     console.log(commandLine("adb", ["-s", options.serial, "uninstall", packageName]));
@@ -88,17 +112,19 @@ function main() {
   }
 
   run(...install);
+  run(...disable);
   run(...enable);
-  execFileSync("adb", ["-s", options.serial, "shell", "sleep", "1"]);
+  waitUntilBound(options.serial, packageName);
 
   const after = enabledServices(options.serial);
   const afterCanonical = new Set(after.map(canonicalComponent));
-  const removed = before.filter((component) => !afterCanonical.has(canonicalComponent(component)));
+  const removed = before
+    .filter((component) => canonicalComponent(component) !== canonicalComponent(service))
+    .filter((component) => !afterCanonical.has(canonicalComponent(component)));
   if (removed.length > 0) throw new Error(`Activation removed existing accessibility services: ${removed.join(", ")}`);
   if (!afterCanonical.has(canonicalComponent(service))) throw new Error("English accessibility service was not enabled");
 
-  run(...launch);
-  console.log("JMGO English Patch is installed and active through the vendor accessibility API.");
+  console.log("JMGO English Patch is installed and its service is active through the vendor accessibility API.");
 }
 
 try {

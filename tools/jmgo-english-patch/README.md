@@ -17,7 +17,8 @@ keyed by Android resource name.
 The APK is an offline, package-scoped accessibility service. It reads visible
 accessibility text, matches known Chinese strings, and draws non-touchable
 English labels over them. The overlay never intercepts remote input. It has no
-network permission and does not click, type, collect, store, or transmit data.
+network permission, launcher activity, or settings permission and does not
+click, type, collect, store, or transmit data.
 
 This is the most complete patch available without JMGO's private signing key,
 root, or a writable system partition. Android 11 rejects a user-installed
@@ -122,8 +123,14 @@ The installer installs the single APK and activates its accessibility service.
 JMGO firmware blocks direct ADB edits and does not expose Android's standard
 Accessibility settings screen, but its already-enabled Hippo key service exposes
 `action.jmgo.request.accessibility.service` for this purpose. The installer uses
-that vendor API, verifies that every previously enabled service remains present,
-and grants the patch no secure-settings permission.
+that vendor API, refreshes only the patch component, verifies that every
+previously enabled service remains present, and requires the patch service to be
+bound without a crash before succeeding.
+
+The APK intentionally has no launcher activity. Hippo force-stops an app when it
+is left with the HOME key, which would also kill an accessibility service in the
+same package. Installation therefore leaves the current projector screen
+unchanged. The patch has no secure-settings permission.
 
 The dry-run output also prints a vendor-API disable command followed by the
 uninstall command for complete rollback.

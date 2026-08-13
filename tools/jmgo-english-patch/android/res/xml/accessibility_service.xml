@@ -5,5 +5,4 @@
     android:accessibilityFlags="flagReportViewIds"
     android:canRetrieveWindowContent="true"
     android:description="@string/service_description"
-    android:notificationTimeout="100"
-    android:settingsActivity="works.earendil.jmgo.english.patch.MainActivity" />
+    android:notificationTimeout="100" />
