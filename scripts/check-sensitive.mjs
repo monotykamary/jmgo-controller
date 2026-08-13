@@ -3,6 +3,7 @@ import { extname, join, relative } from "node:path";
 
 const root = new URL("../", import.meta.url);
 const ignoredDirectories = new Set([".git", ".pi", ".test-dist", "dist", "node_modules"]);
+const ignoredPaths = new Set(["tools/jmgo-english-patch/.build"]);
 const blockedExtensions = new Set([
   ".aab",
   ".apk",
@@ -37,12 +38,13 @@ async function visit(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
     const path = join(directory, entry.name);
+    const display = relative(root.pathname, path);
+    if (entry.isDirectory() && ignoredPaths.has(display)) continue;
     if (entry.isDirectory()) {
       await visit(path);
       continue;
     }
     const name = entry.name;
-    const display = relative(root.pathname, path);
     if (blockedExtensions.has(extname(name).toLowerCase()) || blockedNames.some((pattern) => pattern.test(name))) {
       failures.push(`${display}: blocked artifact type`);
       continue;

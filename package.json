@@ -20,6 +20,7 @@
     "skills",
     "README.md",
     "SECURITY.md",
+    "tools/jmgo-english-patch",
     "LICENSE"
   ],
   "scripts": {
@@ -27,7 +28,9 @@
     "build": "pnpm clean && tsc",
     "check": "pnpm check:sensitive && tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "check:sensitive": "node scripts/check-sensitive.mjs",
-    "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js experiments/artemis-jmgo/*.test.mjs experiments/decoder-pacing/*.test.mjs",
+    "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js experiments/artemis-jmgo/*.test.mjs experiments/decoder-pacing/*.test.mjs tools/jmgo-english-patch/test/*.test.mjs",
+    "patch:english:build": "node tools/jmgo-english-patch/build.mjs",
+    "patch:english:install": "node tools/jmgo-english-patch/install.mjs",
     "simulate:pacing": "node experiments/decoder-pacing/simulate.mjs",
     "simulate:avsync": "node experiments/artemis-jmgo/simulate-audio-route.mjs",
     "prepack": "pnpm build"

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "patchVersion": "0.1.0",
+  "companionPackage": "works.earendil.jmgo.english.patch",
+  "targets": [
+    {
+      "id": "settings",
+      "label": "Settings",
+      "packageName": "com.jmgo.setting.x",
+      "versionCode": 3208,
+      "versionName": "8.1.571",
+      "targetSdk": 28,
+      "certificateSha256": "b2692f5af3e09bad02cfda14f9c9ea9bdc0f678e18c10bcd8a88c5a964fc31e9",
+      "counts": { "strings": 547, "arrays": 5 },
+      "sourceFingerprintSha256": "ffdae1ee01046f4ba3f513063fc519254151208bb4c39490ee201250103a86ca"
+    },
+    {
+      "id": "launcher",
+      "label": "Launcher",
+      "packageName": "com.jmgo.launcher",
+      "versionCode": 7603002,
+      "versionName": "7.6.3.002",
+      "targetSdk": 25,
+      "certificateSha256": "b2692f5af3e09bad02cfda14f9c9ea9bdc0f678e18c10bcd8a88c5a964fc31e9",
+      "counts": { "strings": 1235, "arrays": 2 },
+      "sourceFingerprintSha256": "d16fa1633c051ad48893646b9ea23d8b5cf086bd20d9db3d821f9c86d9706eeb"
+    },
+    {
+      "id": "guide",
+      "label": "Setup Guide",
+      "packageName": "com.jmgo.os.guide",
+      "versionCode": 270,
+      "versionName": "2.7.0",
+      "targetSdk": 30,
+      "certificateSha256": "b2692f5af3e09bad02cfda14f9c9ea9bdc0f678e18c10bcd8a88c5a964fc31e9",
+      "counts": { "strings": 242, "arrays": 0 },
+      "sourceFingerprintSha256": "3970c2bf5be52d63c045d62cf2018349d94bef7899adbda82855bcd79fa77bd6"
+    },
+    {
+      "id": "systemui",
+      "label": "System UI",
+      "packageName": "com.android.systemui",
+      "versionCode": 519,
+      "versionName": "1.1.519",
+      "targetSdk": 28,
+      "certificateSha256": "b2692f5af3e09bad02cfda14f9c9ea9bdc0f678e18c10bcd8a88c5a964fc31e9",
+      "counts": { "strings": 47, "arrays": 2 },
+      "sourceFingerprintSha256": "9a0c54137b870bf38f2e0a58c2a4de6100b08c28f5b5ff915d3d02428d0ca4d0"
+    }
+  ]
+}

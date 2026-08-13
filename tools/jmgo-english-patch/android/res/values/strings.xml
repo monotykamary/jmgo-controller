@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JMGO English Patch</string>
+    <string name="service_name">JMGO English Patch</string>
+    <string name="service_description">Draws local English labels over known untranslated JMGO text. No network access and no input automation.</string>
+    <string name="status_title">JMGO English Patch</string>
+    <string name="status_body">Enable the accessibility service to draw English labels over known untranslated JMGO text in Settings, Launcher, Setup Guide, and System UI.</string>
+    <string name="open_accessibility">Open Accessibility settings</string>
+    <string name="privacy_body">This service only traverses visible text when one of the four supported JMGO packages is active. It does not click, type, collect, store, or transmit anything.</string>
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#3F51B5</item>
+        <item name="android:windowBackground">#101010</item>
+        <item name="android:navigationBarColor">#101010</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#101010</item>
+    </style>
+</resources>

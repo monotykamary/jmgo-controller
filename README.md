@@ -132,6 +132,16 @@ jmgo adb uninstall com.example.app
 
 System applications may not be removable by the ordinary ADB shell. The CLI intentionally does not attempt root access or system partition modification.
 
+## Optional English patch APKs
+
+A host-side builder for a firmware-pinned, offline, package-scoped English
+accessibility overlay APK lives in
+[`tools/jmgo-english-patch`](tools/jmgo-english-patch/README.md). It validates the
+exact JMGO package versions, signer, resource inventory, and source fingerprints
+before building. Building is read-only with respect to the projector; deployment
+is a dry run unless `--apply` is explicitly supplied. No proprietary JMGO APKs
+are committed or published.
+
 ## JMGO Artemis Lab, monitor, and application selection
 
 List the active macOS displays that Sunshine can capture:

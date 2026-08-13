@@ -7,6 +7,7 @@ coverage/
 .DS_Store
 
 # Never commit downloaded applications, Android artifacts, or credentials.
+tools/jmgo-english-patch/.build/
 *.apk
 *.apks
 *.apkm
