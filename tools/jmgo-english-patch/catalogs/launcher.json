@@ -1,9 +1,4 @@
 {
-  "accessibility": {
-    "立即播放": "Play Now",
-    "坚果投屏": "JMGO Cast",
-    "坚果音乐": "JMGO Music"
-  },
   "strings": {
     "abandon": "give up",
     "about_to_enter_dream": "About to enter screensaver mode",

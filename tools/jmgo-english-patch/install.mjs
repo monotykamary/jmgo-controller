@@ -6,10 +6,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+const ARTIFACT = "jmgo-native-english.apk";
+const CHANGE_CONFIGURATION = "android.permission.CHANGE_CONFIGURATION";
+const APPLY_ACTION = "com.jmgo.middleware.service.APPLY_NATIVE_ENGLISH";
 const VENDOR_ACTION = "action.jmgo.request.accessibility.service";
 const VENDOR_COMPONENT_EXTRA = "compontentNameStr";
 const VENDOR_SERVICE = "com.jmgo.hippo/com.jmgo.middleware.service.JmgoKeyAccessibilityService";
-const PATCH_BOUND_MARKER = "Service[label=JMGO English Patch,";
+const SETTINGS_PACKAGE = "com.jmgo.setting.x";
+const SETTINGS_SERVICE = "com.jmgo.setting.SettingService";
+const DASHBOARD_SERVICE = "com.jmgo.setting.DashboardService";
 
 function parseArgs(argv) {
   const options = { artifacts: join(ROOT, ".build", "artifacts"), apply: false };
@@ -39,9 +44,19 @@ function commandLine(command, args) {
   return [command, ...args.map(shellQuote)].join(" ");
 }
 
-function run(command, args) {
+function run(command, args, capture = false) {
   console.log(`> ${commandLine(command, args)}`);
-  execFileSync(command, args, { stdio: "inherit" });
+  if (!capture) {
+    execFileSync(command, args, { stdio: "inherit" });
+    return "";
+  }
+  const output = execFileSync(command, args, { encoding: "utf8" });
+  if (output.trim()) console.log(output.trim());
+  return output;
+}
+
+function adb(serial, ...args) {
+  return execFileSync("adb", ["-s", serial, ...args], { encoding: "utf8" }).trim();
 }
 
 function canonicalComponent(value) {
@@ -52,107 +67,146 @@ function canonicalComponent(value) {
   return `${packageName}/${className.startsWith(".") ? packageName + className : className}`;
 }
 
+function component(packageName, className) {
+  return `${packageName}/${className.startsWith(".") ? packageName + className : className}`;
+}
+
 function serviceComponent(packageName) {
-  return `${packageName}/${packageName}.EnglishAccessibilityService`;
+  return component(packageName, ".EnglishAccessibilityService");
+}
+
+function receiverComponent(packageName) {
+  return component(packageName, ".LocaleRepairReceiver");
 }
 
 function enabledServices(serial) {
-  const value = execFileSync(
-    "adb",
-    ["-s", serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"],
-    { encoding: "utf8" },
-  ).trim();
+  const value = adb(serial, "shell", "settings", "get", "secure", "enabled_accessibility_services");
   return value === "null" || value === "" ? [] : value.split(":").filter(Boolean);
 }
 
 function packageInstalled(serial, packageName) {
-  return execFileSync("adb", ["-s", serial, "shell", "pm", "path", packageName], { encoding: "utf8" }).trim() !== "";
-}
-
-function accessibilityState(serial, packageName) {
-  const dump = execFileSync("adb", ["-s", serial, "shell", "dumpsys", "accessibility"], { encoding: "utf8" });
-  const boundStart = dump.indexOf("Bound services:");
-  const enabledStart = dump.indexOf("Enabled services:", boundStart);
-  const crashedStart = dump.indexOf("Crashed services:", enabledStart);
-  const bound = boundStart >= 0 && enabledStart > boundStart ? dump.slice(boundStart, enabledStart) : "";
-  const crashed = crashedStart >= 0 ? dump.slice(crashedStart) : "";
-  return { bound: bound.includes(PATCH_BOUND_MARKER), crashed: crashed.includes(packageName) };
-}
-
-function waitUntilBound(serial, packageName) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const state = accessibilityState(serial, packageName);
-    if (state.bound && !state.crashed) return;
-    execFileSync("adb", ["-s", serial, "shell", "sleep", "1"]);
+  try {
+    return adb(serial, "shell", "pm", "path", packageName) !== "";
+  } catch {
+    return false;
   }
-  const state = accessibilityState(serial, packageName);
-  throw new Error(`English accessibility service did not bind cleanly (bound=${state.bound}, crashed=${state.crashed})`);
 }
 
-function vendorCommand(serial, component, enabled) {
+function permissionGranted(serial, packageName) {
+  const dump = adb(serial, "shell", "dumpsys", "package", packageName);
+  return dump.includes(`${CHANGE_CONFIGURATION}: granted=true`);
+}
+
+function nativeEnglishState(serial) {
+  const locale = adb(serial, "shell", "getprop", "persist.sys.locale");
+  const config = adb(serial, "shell", "am", "get-config").split(/\r?\n/u)[0] ?? "";
+  const services = adb(serial, "shell", "dumpsys", "activity", "services", SETTINGS_PACKAGE);
+  return {
+    locale,
+    config,
+    pid: adb(serial, "shell", "pidof", SETTINGS_PACKAGE),
+    settingService: services.includes(SETTINGS_SERVICE),
+    dashboardService: services.includes(DASHBOARD_SERVICE),
+  };
+}
+
+function waitForNativeEnglish(serial) {
+  let state = nativeEnglishState(serial);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (state.locale === "en" && /^config:\s+en-ldltr-/u.test(state.config) && state.settingService) return state;
+    execFileSync("adb", ["-s", serial, "shell", "sleep", "1"]);
+    state = nativeEnglishState(serial);
+  }
+  throw new Error(
+    `Native English verification failed (locale=${state.locale || "unset"}, config=${state.config || "unset"}, SettingService=${state.settingService})`
+  );
+}
+
+function vendorCommand(serial, service, enabled) {
   return ["adb", [
     "-s", serial, "shell", "am", "broadcast", "-a", VENDOR_ACTION,
-    "--es", VENDOR_COMPONENT_EXTRA, component, "--ez", "enabled", String(enabled),
+    "--es", VENDOR_COMPONENT_EXTRA, service, "--ez", "enabled", String(enabled),
   ]];
 }
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const metadata = JSON.parse(readFileSync(join(ROOT, "catalogs", "targets.json"), "utf8"));
-  const apk = join(options.artifacts, "jmgo-english-accessibility.apk");
-  if (!existsSync(apk)) throw new Error("Missing artifact: jmgo-english-accessibility.apk");
+  const apk = join(options.artifacts, ARTIFACT);
+  if (!existsSync(apk)) throw new Error(`Missing artifact: ${ARTIFACT}`);
 
   const packageName = metadata.companionPackage;
-  const service = serviceComponent(packageName);
   const legacyPackages = metadata.legacyCompanionPackages ?? [];
+  const oldServices = [packageName, ...legacyPackages].map(serviceComponent);
+  const oldCanonical = new Set(oldServices.map(canonicalComponent));
+  const disableOld = oldServices.map((service) => vendorCommand(options.serial, service, false));
   const install = ["adb", ["-s", options.serial, "install", "-r", apk]];
-  const disableLegacy = legacyPackages.map((legacy) => vendorCommand(options.serial, serviceComponent(legacy), false));
-  const enable = vendorCommand(options.serial, service, true);
-  const disable = vendorCommand(options.serial, service, false);
+  const grant = ["adb", ["-s", options.serial, "shell", "pm", "grant", packageName, CHANGE_CONFIGURATION]];
+  const repair = ["adb", [
+    "-s", options.serial, "shell", "am", "broadcast", "--receiver-foreground",
+    "-a", APPLY_ACTION, "-n", receiverComponent(packageName),
+  ]];
 
   if (!options.apply) {
     console.log("Dry run only. Re-run with --apply to modify the projector:\n");
-    for (const [command, args] of [install, ...disableLegacy, enable]) console.log(commandLine(command, args));
+    for (const [command, args] of disableOld) console.log(commandLine(command, args));
+    for (const [command, args] of [install, grant, repair]) console.log(commandLine(command, args));
     for (const legacy of legacyPackages) console.log(commandLine("adb", ["-s", options.serial, "uninstall", legacy]));
     console.log("\nRollback:");
-    console.log(commandLine(...disable));
     console.log(commandLine("adb", ["-s", options.serial, "uninstall", packageName]));
+    console.log("The native English locale remains selected; rollback removes only boot repair and the launcher app.");
     return;
   }
 
   const before = enabledServices(options.serial);
   const beforeCanonical = new Set(before.map(canonicalComponent));
-  if (!beforeCanonical.has(canonicalComponent(VENDOR_SERVICE))) {
-    throw new Error("JMGO Hippo accessibility service is not enabled; refusing unsafe activation");
+  const oldEnabled = oldServices.some((service) => beforeCanonical.has(canonicalComponent(service)));
+  if (oldEnabled && !beforeCanonical.has(canonicalComponent(VENDOR_SERVICE))) {
+    throw new Error("An old English accessibility service is enabled but JMGO Hippo is unavailable; refusing an unsafe migration");
   }
+  const preserved = before.filter((service) => !oldCanonical.has(canonicalComponent(service)));
   const installedLegacy = legacyPackages.filter((legacy) => packageInstalled(options.serial, legacy));
-  const enabledLegacy = legacyPackages.filter((legacy) => beforeCanonical.has(canonicalComponent(serviceComponent(legacy))));
+  const settingsBefore = nativeEnglishState(options.serial);
+  if (!settingsBefore.pid || !settingsBefore.dashboardService) {
+    throw new Error("JMGO Settings process or DashboardService is unavailable; refusing locale repair");
+  }
+
+  for (const command of disableOld) run(...command);
+  const afterDisable = new Set(enabledServices(options.serial).map(canonicalComponent));
+  const stillEnabled = oldServices.filter((service) => afterDisable.has(canonicalComponent(service)));
+  if (stillEnabled.length > 0) throw new Error(`Old accessibility service is still enabled: ${stillEnabled.join(", ")}`);
+  const removed = preserved.filter((service) => !afterDisable.has(canonicalComponent(service)));
+  if (removed.length > 0) throw new Error(`Migration removed an unrelated accessibility service: ${removed.join(", ")}`);
 
   run(...install);
-  try {
-    for (const command of disableLegacy) run(...command);
-    run(...enable);
-    waitUntilBound(options.serial, packageName);
-  } catch (error) {
-    try {
-      run(...disable);
-      for (const legacy of enabledLegacy) run(...vendorCommand(options.serial, serviceComponent(legacy), true));
-    } catch (rollbackError) {
-      error.message += `; legacy restoration also failed: ${rollbackError.message}`;
-    }
-    throw error;
+  run(...grant);
+  if (!permissionGranted(options.serial, packageName)) {
+    throw new Error(`${CHANGE_CONFIGURATION} was not granted`);
   }
 
-  const after = enabledServices(options.serial);
-  const afterCanonical = new Set(after.map(canonicalComponent));
-  const intentional = new Set([canonicalComponent(service), ...legacyPackages.map((legacy) => canonicalComponent(serviceComponent(legacy)))]);
-  const removed = before.filter((component) => !intentional.has(canonicalComponent(component)))
-    .filter((component) => !afterCanonical.has(canonicalComponent(component)));
-  if (removed.length > 0) throw new Error(`Activation removed existing accessibility services: ${removed.join(", ")}`);
-  if (!afterCanonical.has(canonicalComponent(service))) throw new Error("English accessibility service was not enabled");
+  const repairOutput = run(...repair, true);
+  if (!/Broadcast completed:\s+result=-1/u.test(repairOutput)) {
+    throw new Error(`Native English repair receiver failed: ${repairOutput.trim() || "no broadcast result"}`);
+  }
+  const state = waitForNativeEnglish(options.serial);
+  if (state.pid !== settingsBefore.pid) {
+    throw new Error(`JMGO Settings process restarted during locale repair (${settingsBefore.pid} -> ${state.pid})`);
+  }
+  if (!state.dashboardService) {
+    throw new Error("JMGO DashboardService was not preserved during locale repair");
+  }
+
+  const finalServices = new Set(enabledServices(options.serial).map(canonicalComponent));
+  const finalRemoved = preserved.filter((service) => !finalServices.has(canonicalComponent(service)));
+  if (finalRemoved.length > 0) {
+    throw new Error(`Native English activation removed an unrelated accessibility service: ${finalRemoved.join(", ")}`);
+  }
+  if (oldServices.some((service) => finalServices.has(canonicalComponent(service)))) {
+    throw new Error("An old English accessibility service was re-enabled unexpectedly");
+  }
 
   for (const legacy of installedLegacy) run("adb", ["-s", options.serial, "uninstall", legacy]);
-  console.log("JMGO English Patch is installed and its service is active through the vendor accessibility API.");
+  console.log(`JMGO Native English is active (locale=${state.locale}, ${state.config}) with Settings PID ${state.pid}, DashboardService preserved, SettingService restored, and no patch accessibility service.`);
 }
 
 try {

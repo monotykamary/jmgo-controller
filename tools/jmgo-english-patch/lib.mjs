@@ -97,10 +97,6 @@ export function parseAapt2Resources(output) {
   return resources;
 }
 
-function sortRecord(record) {
-  return Object.fromEntries(Object.entries(record).sort(([left], [right]) => left.localeCompare(right)));
-}
-
 export function sourceView(resources, catalog) {
   const strings = {};
   for (const name of Object.keys(catalog.strings ?? {}).sort()) {
@@ -199,18 +195,6 @@ export function validateCatalog(resources, catalog, target) {
     });
   }
 
-  for (const [source, translation] of Object.entries(catalog.accessibility ?? {})) {
-    if (!CJK_PATTERN.test(source)) errors.push(`accessibility/${source} has no CJK source text`);
-    if (typeof translation !== "string" || translation.trim() === "") {
-      errors.push(`accessibility/${source} has an empty or non-string translation`);
-      continue;
-    }
-    if (CJK_PATTERN.test(translation)) errors.push(`accessibility/${source} still contains CJK text`);
-    if (!sameStrings(formatSignature(source), formatSignature(translation))) {
-      errors.push(`accessibility/${source} changed format placeholders`);
-    }
-  }
-
   const fingerprint = sourceFingerprint(resources, catalog);
   if (target.sourceFingerprintSha256 && fingerprint !== target.sourceFingerprintSha256) {
     errors.push(`source fingerprint is ${fingerprint}, expected ${target.sourceFingerprintSha256}`);
@@ -221,55 +205,4 @@ export function validateCatalog(resources, catalog, target) {
 
   if (errors.length > 0) throw new Error(`${target.id} catalog validation failed:\n- ${errors.join("\n- ")}`);
   return { fingerprint, strings: sourceStringNames.length, arrays: sourceArrayNames.length };
-}
-
-export function normalizeAccessibilityText(value) {
-  return value.replaceAll("\u00a0", " ").replace(/\s+/gu, " ").trim();
-}
-
-function stripMarkup(value) {
-  return value.replace(/<[^>]+>/gu, "");
-}
-
-export function buildAccessibilityCatalog(targets, resourcesById, catalogsById) {
-  const packages = {};
-  const conflicts = [];
-  for (const target of targets) {
-    const resources = resourcesById[target.id];
-    const catalog = catalogsById[target.id];
-    const exact = {};
-    const templates = [];
-
-    const add = (sourceValue, translatedValue, key) => {
-      const source = normalizeAccessibilityText(stripMarkup(sourceValue));
-      const translation = normalizeAccessibilityText(stripMarkup(translatedValue));
-      if (!source || !CJK_PATTERN.test(source) || !translation) return;
-      if (formatSignature(sourceValue).length > 0) {
-        templates.push({ source, translation, key });
-        return;
-      }
-      const existing = exact[source];
-      if (existing !== undefined && existing !== translation) {
-        conflicts.push(`${target.id}:${key}`);
-      } else {
-        exact[source] = translation;
-      }
-    };
-
-    for (const [source, translation] of Object.entries(catalog.accessibility ?? {})) {
-      add(source, translation, `accessibility/${source}`);
-    }
-    for (const [name, translation] of Object.entries(catalog.strings ?? {})) {
-      add(resources.strings[name][""], translation, `string/${name}`);
-    }
-    for (const [name, translations] of Object.entries(catalog.arrays ?? {})) {
-      resources.arrays[name][""].forEach((source, index) => add(source, translations[index], `array/${name}[${index}]`));
-    }
-
-    packages[target.packageName] = {
-      exact: sortRecord(exact),
-      templates: templates.sort((left, right) => left.key.localeCompare(right.key)),
-    };
-  }
-  return { schemaVersion: 1, packages, conflicts };
 }

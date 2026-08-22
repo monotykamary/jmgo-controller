@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "patchVersion": "0.2.0",
-  "patchVersionCode": 4,
+  "patchVersion": "0.3.0",
+  "patchVersionCode": 5,
   "companionPackage": "com.jmgo.middleware.service",
   "legacyCompanionPackages": ["works.earendil.jmgo.english.patch"],
   "targets": [

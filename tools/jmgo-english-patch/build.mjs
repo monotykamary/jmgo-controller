@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  buildAccessibilityCatalog,
   parseAapt2Resources,
   validateCatalog,
 } from "./lib.mjs";
@@ -208,16 +207,13 @@ function listJavaSources(directory) {
   return output;
 }
 
-function buildCompanion(accessibilityCatalog, work, output, signing, tools, java, version) {
+function buildCompanion(work, output, signing, tools, java, version) {
   const directory = join(work, "companion");
   const classes = join(directory, "classes");
   const dex = join(directory, "dex");
-  const assets = join(directory, "assets");
   const compiled = join(directory, "compiled.zip");
   mkdirSync(classes, { recursive: true });
   mkdirSync(dex, { recursive: true });
-  mkdirSync(assets, { recursive: true });
-  writeFileSync(join(assets, "translations.json"), `${JSON.stringify(accessibilityCatalog)}\n`);
 
   const sources = listJavaSources(join(ROOT, "android", "src"));
   run(java.javac, ["-encoding", "UTF-8", "-source", "8", "-target", "8", "-classpath", tools.androidJar, "-d", classes, ...sources]);
@@ -230,10 +226,10 @@ function buildCompanion(accessibilityCatalog, work, output, signing, tools, java
   run(join(tools.buildTools, "aapt2"), [
     "link", "--manifest", join(ROOT, "android", "AndroidManifest.xml"), "-I", tools.androidJar,
     "--min-sdk-version", "30", "--target-sdk-version", "30", "--version-code", String(version.code), "--version-name", version.name,
-    "-A", assets, "-o", unsigned, compiled,
+    "-o", unsigned, compiled,
   ]);
   run("zip", ["-q", "-j", unsigned, join(dex, "classes.dex")]);
-  const destination = join(output, "jmgo-english-accessibility.apk");
+  const destination = join(output, "jmgo-native-english.apk");
   signApk(unsigned, destination, signing, tools);
   return destination;
 }
@@ -267,14 +263,11 @@ function main() {
       reports.push({ id: target.id, ...validateCatalog(resources[target.id], catalogs[target.id], target) });
     }
 
-    const artifacts = [];
-    const accessibility = buildAccessibilityCatalog(metadata.targets, resources, catalogs);
-    if (accessibility.conflicts.length > 0) throw new Error(`Accessibility catalogue conflicts: ${accessibility.conflicts.join(", ")}`);
-    delete accessibility.conflicts;
-    artifacts.push(buildCompanion(accessibility, work, options.output, signing, tools, java, {
+    const artifacts = [buildCompanion(work, options.output, signing, tools, java, {
       code: metadata.patchVersionCode,
       name: metadata.patchVersion,
-    }));
+    })];
+    rmSync(join(options.output, "jmgo-english-accessibility.apk"), { force: true });
 
     const artifactManifest = {
       schemaVersion: 1,

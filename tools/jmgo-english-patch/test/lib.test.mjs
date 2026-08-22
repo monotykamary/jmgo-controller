@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildAccessibilityCatalog,
   formatSignature,
-  normalizeAccessibilityText,
   parseAapt2Resources,
   translatableInventory,
   validateCatalog,
@@ -47,56 +45,22 @@ test("validateCatalog rejects changed Android placeholders", () => {
     strings: { formatted: "Connected to %1$s with %2$d devices", multiline: "First line\nSecond line" },
     arrays: { modes: ["English", "Automatic mode", "Quoted mode"] },
   };
-  const target = {
-    id: "fixture",
-    counts: { strings: 2, arrays: 1 },
-  };
+  const target = { id: "fixture", counts: { strings: 2, arrays: 1 } };
   assert.doesNotThrow(() => validateCatalog(resources, catalog, target));
   catalog.strings.formatted = "Connected";
   assert.throws(() => validateCatalog(resources, catalog, target), /changed format placeholders/u);
 });
 
-test("accessibility catalog normalizes text and retains templates", () => {
+test("catalog validation rejects CJK translations", () => {
   const resources = parseAapt2Resources(DUMP);
   const catalog = {
-    accessibility: { "硬编码标签": "Runtime-only label" },
-    strings: { formatted: "Connected to %1$s; %2$d devices", multiline: "First line Second line" },
-    arrays: { modes: ["English", "Automatic mode", "Quoted mode"] },
-  };
-  const result = buildAccessibilityCatalog(
-    [{ id: "fixture", packageName: "com.example" }],
-    { fixture: resources },
-    { fixture: catalog },
-  );
-  assert.equal(result.packages["com.example"].exact["第一行 第二行"], "First line Second line");
-  assert.equal(result.packages["com.example"].exact["硬编码标签"], "Runtime-only label");
-  assert.equal(result.packages["com.example"].templates.length, 1);
-  assert.equal(normalizeAccessibilityText(" one\u00a0 two\nthree "), "one two three");
-  assert.deepEqual(formatSignature("100% and %1$s / %02d"), ["%02d", "%1$s"]);
-});
-
-test("catalog validation rejects invalid runtime-only translations", () => {
-  const resources = parseAapt2Resources(DUMP);
-  const catalog = {
-    accessibility: { "动态标签": "仍是中文" },
-    strings: { formatted: "Connected to %1$s with %2$d devices", multiline: "First line\nSecond line" },
+    strings: { formatted: "仍然包含 %1$s 和 %2$d", multiline: "First line\nSecond line" },
     arrays: { modes: ["English", "Automatic mode", "Quoted mode"] },
   };
   const target = { id: "fixture", counts: { strings: 2, arrays: 1 } };
   assert.throws(() => validateCatalog(resources, catalog, target), /still contains CJK text/u);
 });
 
-test("accessibility catalog accepts duplicate sources with identical translations", () => {
-  const resources = {
-    strings: { first: { "": "按" }, second: { "": "按\u00a0" } },
-    arrays: {},
-  };
-  const catalog = { strings: { first: "Press", second: "Press" }, arrays: {} };
-  const result = buildAccessibilityCatalog(
-    [{ id: "fixture", packageName: "com.example" }],
-    { fixture: resources },
-    { fixture: catalog },
-  );
-  assert.deepEqual(result.conflicts, []);
-  assert.equal(result.packages["com.example"].exact["按"], "Press");
+test("formatSignature preserves indexed and padded Android placeholders", () => {
+  assert.deepEqual(formatSignature("100% and %1$s / %02d"), ["%02d", "%1$s"]);
 });
