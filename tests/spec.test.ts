@@ -11,7 +11,7 @@ const allNodes = (node: CommandSpec): CommandSpec[] => [
 test("primary commands match the dispatch in cli.ts", () => {
   assert.deepEqual(
     commandSpec.subcommands.map((child) => child.name),
-    ["discover", "host", "remote", "adb", "artemis", "play", "doctor", "completions"],
+    ["discover", "host", "remote", "adb", "scrcpy", "artemis", "play", "doctor", "completions"],
   );
 });
 

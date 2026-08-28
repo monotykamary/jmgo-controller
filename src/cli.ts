@@ -33,6 +33,7 @@ import { runCompletion } from "./completion.js";
 import { completionScriptFor, isSupportedShell, supportedShells } from "./completion-scripts.js";
 import { renderHelp, suggest } from "./help.js";
 import { keyCodes, Remote, type RemoteKey } from "./remote.js";
+import { runScrcpy } from "./scrcpy.js";
 import { unwireShellCompletions, wireShellCompletions } from "./shell-completions.js";
 import { commandSpec, resolveCommandPath } from "./spec.js";
 
@@ -129,6 +130,20 @@ async function adbCommand(args: string[]): Promise<void> {
     const output = await adb.input(args);
     if (output) console.log(output);
   } else throw usageError("adb", command, ["info", "current", "audio", "packages", "install", "uninstall", "launch", "screenshot", "input"]);
+}
+
+async function scrcpyCommand(args: string[]): Promise<void> {
+  const host = await hostFrom(args);
+  const mirror = !takeFlag(args, "--no-mirror");
+  const maxFpsOption = takeOption(args, "--max-fps");
+  const maxFps = maxFpsOption === undefined ? undefined : Number(maxFpsOption);
+  if (maxFps !== undefined && (!Number.isInteger(maxFps) || maxFps < 1 || maxFps > 240)) {
+    throw new Error("--max-fps must be an integer from 1 through 240");
+  }
+  // Anything after a bare "--" is handed straight to scrcpy.
+  const separator = args.indexOf("--");
+  if (separator >= 0) args.splice(separator, 1);
+  await runScrcpy(host, { mirror, ...(maxFps !== undefined ? { maxFps } : {}), extraArgs: args });
 }
 
 async function waitForArtemisStream(adb: Adb, appName: string, timeoutMs = 15_000): Promise<void> {
@@ -331,7 +346,9 @@ async function main(): Promise<void> {
   // Help is progressive: --help resolves against the already-typed command
   // path, so "jmgo remote --help" shows remote help and "jmgo remote key
   // --help" shows the key list.
-  const helpScan = args;
+  // Flags after a bare "--" belong to the scrcpy passthrough, not to help.
+  const separator = args.indexOf("--");
+  const helpScan = separator === -1 ? args : args.slice(0, separator);
   if (args.length === 0) {
     process.stdout.write(renderHelp());
     return;
@@ -380,6 +397,7 @@ async function main(): Promise<void> {
     } else throw usageError("host", action, ["show", "set", "clear"]);
   } else if (command === "remote") await remoteCommand(args);
   else if (command === "adb") await adbCommand(args);
+  else if (command === "scrcpy") await scrcpyCommand(args);
   else if (command === "artemis") await artemisCommand(args);
   else if (command === "play") await playCommand(args);
   else if (command === "doctor") {
@@ -387,11 +405,12 @@ async function main(): Promise<void> {
       host:
         takeOption(args, "--host") ?? process.env.JMGO_HOST ?? (await loadSavedHost()) ?? null,
       adb: await findExecutable("adb"),
+      scrcpy: await findExecutable("scrcpy"),
       apksigner: await findExecutable("apksigner"),
       gplaydl: await findExecutable("gplaydl"),
     };
     console.log(JSON.stringify(report, null, 2));
-    if (!report.host || !report.adb || !report.apksigner || !report.gplaydl) {
+    if (!report.host || !report.adb || !report.scrcpy || !report.apksigner || !report.gplaydl) {
       process.exitCode = 1;
     }
   } else {

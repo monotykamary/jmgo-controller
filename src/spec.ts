@@ -104,7 +104,7 @@ export const commandSpec: CommandSpec = {
   name: "",
   summary: "Local-first control for JMGO projectors",
   description:
-    "Native LAN remote control, ADB automation and input control, certified Artemis streaming, and verified Google Play installs for JMGO projectors running Bonfire OS.",
+    "Native LAN remote control, ADB automation and input control, scrcpy mirroring, certified Artemis streaming, and verified Google Play installs for JMGO projectors running Bonfire OS.",
   options: [
     { long: "--help", short: "-h", description: "show help for jmgo or a command" },
     { long: "--version", description: "print the version" },
@@ -248,6 +248,19 @@ export const commandSpec: CommandSpec = {
       ],
     },
     {
+      name: "scrcpy",
+      summary: "mirror the projector and control it with the Mac keyboard and mouse",
+      description: "Mirrors the display at 60 fps by default and injects keyboard, mouse, and touch events over ADB. Audio stays on the projector speakers; pass an --audio flag after -- to capture it here. --no-mirror keeps control only. Anything after -- is passed straight to scrcpy.",
+      options: [
+        hostOption,
+        { long: "--no-mirror", description: "control without mirroring the display" },
+        { long: "--max-fps", valueName: "FPS", description: "mirrored frame rate cap (default 60)" },
+      ],
+      positionals: [{ name: "SCRCPY_ARGS", optional: true, variadic: true, source: "files" }],
+      passthrough: true,
+      subcommands: [],
+    },
+    {
       name: "artemis",
       summary: "open JMGO Artemis Lab, optionally straight into a Sunshine stream",
       description: "Defaults to open. --monitor and --minimum-fps are persisted into sunshine.conf and require a Sunshine restart. --app is remembered as the default app; --no-app skips it once.",
@@ -316,7 +329,7 @@ export const commandSpec: CommandSpec = {
     {
       name: "doctor",
       summary: "report host resolution and required executables",
-      description: "Exits non-zero when the host is unresolved or adb, apksigner, or gplaydl is missing.",
+      description: "Exits non-zero when the host is unresolved or adb, scrcpy, apksigner, or gplaydl is missing.",
       options: [hostOption],
       positionals: [],
       subcommands: [],

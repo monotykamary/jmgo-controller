@@ -16,6 +16,7 @@ The protocol was validated on a JMGO S901 running Bonfire OS. Other models may u
 - Capture valid screenshots even when Bonfire OS prefixes binary shell output.
 - Open the certified JMGO Artemis Lab client, clear stale Sunshine sessions, and select the streamed macOS monitor and Sunshine application.
 - Send keyboard, mouse, and touch input events to the projector over ADB (`jmgo adb input`).
+- Mirror the projector display and control it with the Mac keyboard and mouse through scrcpy (`jmgo scrcpy`, 60 fps by default).
 - Download Play APK splits with `gplaydl`, verify every split has the same signing certificate, and install them in one ADB session.
 - Redact serial numbers and Bluetooth addresses and strip unsafe Unicode formatting by default.
 - Import the protocol, remote, ADB, discovery, and Play APIs from TypeScript or JavaScript.
@@ -33,6 +34,7 @@ Some Bonfire OS builds expose unauthenticated ADB over the local network. Anyone
 - A JMGO projector reachable on the same LAN
 - Android Platform Tools for ADB commands
 - Keyboard, mouse, and touch input control is built in (via ADB)
+- Optional display mirroring and remote view: `scrcpy`
 - Artemis host integration: macOS with Sunshine
 - Stream certification: Safari, `ffmpeg`, and `afplay`
 - Optional Play support:
@@ -43,6 +45,7 @@ On macOS:
 
 ```bash
 brew install --cask android-platform-tools
+brew install scrcpy
 pipx install gplaydl
 ```
 
@@ -198,6 +201,35 @@ jmgo adb input motionevent DOWN 500 500     # raw motion events
 ```
 
 Sources include `dpad`, `keyboard`, `mouse`, `touchpad`, `gamepad`, `touchscreen`, `stylus`, and `trackball`. For infrared-style D-pad and volume keys, the native `jmgo remote key` path (TCP 9005) needs no ADB connection. Input behavior can vary by Android TV application.
+
+## Remote view with keyboard and mouse
+
+Mirror the projector on the Mac and drive it with the keyboard and mouse. Mirroring runs at 60 fps by default and events are injected through the Android InputManager over ADB:
+
+```bash
+jmgo scrcpy
+```
+
+Control without mirroring (no window):
+
+```bash
+jmgo scrcpy --no-mirror
+```
+
+Cap or raise the frame rate, or pass extra scrcpy flags after `--`:
+
+```bash
+jmgo scrcpy --max-fps 30
+jmgo scrcpy -- --window-title "JMGO" --stay-awake
+```
+
+Keyboard and pointer behavior can vary by Android TV application.
+
+Audio stays on the projector speakers by default (the S901 has no Opus encoder, so scrcpy's default audio stream fails anyway). To capture projector audio on the Mac, opt back in after `--`:
+
+```bash
+jmgo scrcpy -- --audio-codec=aac --audio-encoder=OMX.google.aac.encoder
+```
 
 ## Verified Play delivery
 
