@@ -12,8 +12,10 @@ export type ProcessRunner = (
   options?: { inherit?: boolean; allowFailure?: boolean },
 ) => Promise<ProcessResult>;
 
+// "Signer #1 certificate ..." (v1/v2/v3) and "V3.1 Signer: (minSdkVersion=33,
+// ...) certificate ..." (v3.1 rotated-key blocks) both carry the digest.
 const digestPattern =
-  /(?:Signer #\d+|V\d+(?:\.\d+)* Signer):? certificate SHA-256 digest: ([0-9a-fA-F:]+)/g;
+  /(?:Signer #\d+|V\d+(?:\.\d+)* Signer):?\s*(?:\([^)]*\)\s*)?certificate SHA-256 digest: ([0-9a-fA-F:]+)/g;
 const packagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
 
 export async function verifyApkSigners(
