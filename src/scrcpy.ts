@@ -8,6 +8,9 @@ export type ScrcpyOptions = {
   mirror?: boolean;
   // Mirrored display frame rate cap (default 60).
   maxFps?: number;
+  // Opt-in display buffering delay in milliseconds; absorbs Wi-Fi delivery
+  // jitter so late frames are smoothed instead of dropped (costs latency).
+  videoBuffer?: number;
   extraArgs?: readonly string[];
 };
 
@@ -25,6 +28,7 @@ export function buildScrcpyArgs(
       : [
         `--max-fps=${options.maxFps ?? 60}`,
         "--stay-awake",
+        ...(options.videoBuffer === undefined ? [] : [`--video-buffer=${options.videoBuffer}`]),
         ...(audioRequested ? [] : ["--no-audio"]),
       ];
   return [

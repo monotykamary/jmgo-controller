@@ -223,6 +223,12 @@ jmgo scrcpy --max-fps 30
 jmgo scrcpy -- --window-title "JMGO" --stay-awake
 ```
 
+On jittery Wi-Fi, scrcpy drops frames that arrive late (its display buffer is zero by default, favoring latency). Buffer the video stream for a few tens of milliseconds to smooth delivery at the cost of added latency:
+
+```bash
+jmgo scrcpy --video-buffer 80
+```
+
 Keyboard and pointer behavior can vary by Android TV application.
 
 Audio stays on the projector speakers by default (the S901 has no Opus encoder, so scrcpy's default audio stream fails anyway). To capture projector audio on the Mac, opt back in after `--`:

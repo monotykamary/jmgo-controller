@@ -140,10 +140,20 @@ async function scrcpyCommand(args: string[]): Promise<void> {
   if (maxFps !== undefined && (!Number.isInteger(maxFps) || maxFps < 1 || maxFps > 240)) {
     throw new Error("--max-fps must be an integer from 1 through 240");
   }
+  const videoBufferOption = takeOption(args, "--video-buffer");
+  const videoBuffer = videoBufferOption === undefined ? undefined : Number(videoBufferOption);
+  if (videoBuffer !== undefined && (!Number.isInteger(videoBuffer) || videoBuffer < 1 || videoBuffer > 10_000)) {
+    throw new Error("--video-buffer must be an integer from 1 through 10000");
+  }
   // Anything after a bare "--" is handed straight to scrcpy.
   const separator = args.indexOf("--");
   if (separator >= 0) args.splice(separator, 1);
-  await runScrcpy(host, { mirror, ...(maxFps !== undefined ? { maxFps } : {}), extraArgs: args });
+  await runScrcpy(host, {
+    mirror,
+    ...(maxFps !== undefined ? { maxFps } : {}),
+    ...(videoBuffer !== undefined ? { videoBuffer } : {}),
+    extraArgs: args,
+  });
 }
 
 async function waitForArtemisStream(adb: Adb, appName: string, timeoutMs = 15_000): Promise<void> {

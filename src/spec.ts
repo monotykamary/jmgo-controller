@@ -250,11 +250,12 @@ export const commandSpec: CommandSpec = {
     {
       name: "scrcpy",
       summary: "mirror the projector and control it with the Mac keyboard and mouse",
-      description: "Mirrors the display at 60 fps by default and injects keyboard, mouse, and touch events over ADB. Audio stays on the projector speakers; pass an --audio flag after -- to capture it here. --no-mirror keeps control only. Anything after -- is passed straight to scrcpy.",
+      description: "Mirrors the display at 60 fps by default and injects keyboard, mouse, and touch events over ADB. Audio stays on the projector speakers; pass an --audio flag after -- to capture it here. --no-mirror keeps control only. --video-buffer trades latency for smoothness on jittery Wi-Fi. Anything after -- is passed straight to scrcpy.",
       options: [
         hostOption,
         { long: "--no-mirror", description: "control without mirroring the display" },
         { long: "--max-fps", valueName: "FPS", description: "mirrored frame rate cap (default 60)" },
+        { long: "--video-buffer", valueName: "MS", description: "buffer video by MS milliseconds to smooth frame delivery (opt-in, costs latency)" },
       ],
       positionals: [{ name: "SCRCPY_ARGS", optional: true, variadic: true, source: "files" }],
       passthrough: true,
