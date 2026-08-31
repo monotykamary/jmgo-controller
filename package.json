@@ -25,15 +25,15 @@
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs dist",
-    "build": "pnpm clean && tsc",
-    "check": "pnpm check:sensitive && tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "build": "bun run clean && tsc",
+    "check": "bun run check:sensitive && tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "check:sensitive": "node scripts/check-sensitive.mjs",
     "test": "node scripts/clean.mjs .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js experiments/artemis-jmgo/*.test.mjs experiments/decoder-pacing/*.test.mjs tools/jmgo-english-patch/test/*.test.mjs",
     "patch:english:build": "node tools/jmgo-english-patch/build.mjs",
     "patch:english:install": "node tools/jmgo-english-patch/install.mjs",
     "simulate:pacing": "node experiments/decoder-pacing/simulate.mjs",
     "simulate:avsync": "node experiments/artemis-jmgo/simulate-audio-route.mjs",
-    "prepack": "pnpm build"
+    "prepack": "bun run build"
   },
   "pi": {
     "skills": [
@@ -43,7 +43,6 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "pnpm@10.34.5",
   "keywords": [
     "pi-package",
     "jmgo",
