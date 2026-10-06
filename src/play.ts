@@ -84,7 +84,7 @@ export async function installFromPlay(
       directory,
       "--no-extras",
     ];
-    if (options.languages) args.push("--languages", options.languages);
+    if (options.languages) args.push("--locale", options.languages);
     await runProcess(gplaydl, args, { inherit: true });
     const files = await findApks(directory, packageName);
     if (files.length === 0) throw new PlayError("gplaydl produced no APK files");
